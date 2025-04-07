@@ -6,6 +6,9 @@ from typing import Dict, List, Tuple, Optional, Union, Any
 import matplotlib.pyplot as plt
 import logging
 import sys
+import re
+import time
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -18,7 +21,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def add_debug_info(message: str):
+    """Add debug information to the session state and log it."""
     logger.debug(message)
+    if 'debug_info' in st.session_state:
+        st.session_state.debug_info.append(message)
 
 # Import modules
 from modules.load_data import load_excel_file, validate_dataframes, get_fiscal_years, get_college_units, normalize_column_names
@@ -49,6 +55,11 @@ logger.info("Application started")
 SDSU_BLUE = "#0033A0"
 SDSU_YELLOW = "#FFD100"
 SDSU_WHITE = "#FFFFFF"
+
+# Security and configuration settings
+DEFAULT_MAX_UPLOAD_SIZE_MB = 200
+ALLOWED_FILE_TYPES = ["xlsx", "xls"]
+MAX_PROCESSING_TIME_SECONDS = 300  # 5 minutes timeout for processing
 
 # Custom CSS
 st.markdown(f"""
@@ -95,6 +106,20 @@ st.markdown(f"""
         font-family: monospace;
         white-space: pre-wrap;
     }}
+    .warning-box {{
+        background-color: #fff3cd;
+        border: 1px solid #ffeeba;
+        border-radius: 4px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }}
+    .error-box {{
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        border-radius: 4px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -125,42 +150,81 @@ if 'fiscal_years' not in st.session_state:
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
 
+if 'debug_info' not in st.session_state:
+    st.session_state.debug_info = []
+
+if 'max_upload_size_mb' not in st.session_state:
+    st.session_state.max_upload_size_mb = DEFAULT_MAX_UPLOAD_SIZE_MB
+
+if 'processing_start_time' not in st.session_state:
+    st.session_state.processing_start_time = None
+
 # Sidebar
 with st.sidebar:
     st.markdown(f'<h2 style="color: {SDSU_BLUE};">Upload Data</h2>', unsafe_allow_html=True)
     
-    # File uploader
-    uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
+    # Configuration section
+    with st.expander("Configuration"):
+        st.markdown("### Security Settings")
+        max_upload_size = st.number_input(
+            "Maximum file upload size (MB)", 
+            min_value=1, 
+            max_value=200, 
+            value=st.session_state.max_upload_size_mb,
+            help="Set the maximum allowed file size for uploads"
+        )
+        st.session_state.max_upload_size_mb = max_upload_size
+        
+        st.markdown("### Advanced Settings")
+        show_debug_info = st.checkbox("Show debug information", value=True)
+    
+    # File uploader with size limit
+    uploaded_file = st.file_uploader(
+        f"Upload Excel file (max {st.session_state.max_upload_size_mb}MB)", 
+        type=ALLOWED_FILE_TYPES
+    )
     
     # Sheet selection
     if uploaded_file is not None:
-        add_debug_info(f"File uploaded: {uploaded_file.name}")
-        
-        # Save the uploaded file to a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            tmp_file_path = tmp_file.name
-            add_debug_info(f"Temporary file created: {tmp_file_path}")
-        
-        # Load the Excel file to get sheet names
-        try:
-            xl = pd.ExcelFile(tmp_file_path)
-            sheet_names = xl.sheet_names
-            add_debug_info(f"Available sheets: {sheet_names}")
+        # Check file size
+        file_size_mb = uploaded_file.size / (1024 * 1024)
+        if file_size_mb > st.session_state.max_upload_size_mb:
+            st.error(f"File size ({file_size_mb:.2f}MB) exceeds the maximum allowed size ({st.session_state.max_upload_size_mb}MB)")
+            uploaded_file = None
+        else:
+            add_debug_info(f"File uploaded: {uploaded_file.name} (Size: {file_size_mb:.2f}MB)")
             
-            # Default sheet selection
-            default_sheets = ["AwardsRawData", "AwardsCoPIsRawData"]
-            selected_sheets = st.multiselect(
-                "Select sheets to analyze",
-                sheet_names,
-                default=[sheet for sheet in default_sheets if sheet in sheet_names]
-            )
-            add_debug_info(f"Selected sheets: {selected_sheets}")
-        except Exception as e:
-            error_msg = f"Error loading Excel file: {str(e)}"
-            logger.error(error_msg)
-            st.error(error_msg)
-            selected_sheets = []
+            # Save the uploaded file to a temporary file
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_file_path = tmp_file.name
+                    add_debug_info(f"Temporary file created: {tmp_file_path}")
+                
+                # Load the Excel file to get sheet names
+                try:
+                    xl = pd.ExcelFile(tmp_file_path)
+                    sheet_names = xl.sheet_names
+                    add_debug_info(f"Available sheets: {sheet_names}")
+                    
+                    # Default sheet selection
+                    default_sheets = ["AwardsRawData", "AwardsCoPIsRawData"]
+                    selected_sheets = st.multiselect(
+                        "Select sheets to analyze",
+                        sheet_names,
+                        default=[sheet for sheet in default_sheets if sheet in sheet_names]
+                    )
+                    add_debug_info(f"Selected sheets: {selected_sheets}")
+                except Exception as e:
+                    error_msg = f"Error loading Excel file: {str(e)}"
+                    logger.error(error_msg)
+                    st.error(error_msg)
+                    selected_sheets = []
+            except Exception as e:
+                error_msg = f"Error saving uploaded file: {str(e)}"
+                logger.error(error_msg)
+                st.error(error_msg)
+                selected_sheets = []
     else:
         selected_sheets = []
         tmp_file_path = None
@@ -168,57 +232,75 @@ with st.sidebar:
     # Process the uploaded file and update session state if not already done
     if (uploaded_file is not None and selected_sheets and not st.session_state.data_loaded):
         try:
-            dataframes = load_excel_file(tmp_file_path, selected_sheets)
-            add_debug_info("Data loaded from Excel file")
+            # Set processing start time
+            st.session_state.processing_start_time = time.time()
             
-            for sheet_name, df in dataframes.items():
-                add_debug_info(f"\nSheet: {sheet_name}")
-                add_debug_info(f"Shape: {df.shape}")
-                add_debug_info(f"Columns: {list(df.columns)}")
-                add_debug_info(f"Missing values:\n{df.isnull().sum()}")
-            
-            # Validate data
-            is_valid, errors = validate_dataframes(dataframes)
-            if not is_valid:
-                st.error("Data validation failed:")
-                for error in errors:
-                    st.error(error)
-                st.stop()
-            
-            add_debug_info("\nData validation passed")
-            
-            # Normalize column names
-            normalized_dataframes = normalize_column_names(dataframes)
-            add_debug_info("\nColumn names normalized")
-            
-            for sheet_name, df in normalized_dataframes.items():
-                add_debug_info(f"\nNormalized sheet: {sheet_name}")
-                add_debug_info(f"Columns after normalization: {list(df.columns)}")
-            
-            # Clean data
-            cleaned_dataframes = clean_data(normalized_dataframes)
-            
-            for sheet_name, df in cleaned_dataframes.items():
-                add_debug_info(f"\nCleaned sheet: {sheet_name}")
-                add_debug_info(f"Shape after cleaning: {df.shape}")
-                add_debug_info(f"Columns after cleaning: {list(df.columns)}")
-                add_debug_info(f"Missing values after cleaning:\n{df.isnull().sum()}")
-            
-            # Store in session state
-            st.session_state.dataframes = cleaned_dataframes.copy()
-            st.session_state.filtered_dataframes = cleaned_dataframes.copy()
-            
-            # Get fiscal years and college units
-            fiscal_years = get_fiscal_years(cleaned_dataframes)
-            st.session_state.fiscal_years = sorted(fiscal_years) if fiscal_years else []
-            st.session_state.college_units = get_college_units(cleaned_dataframes)
-            
-            add_debug_info(f"\nFiscal years found: {st.session_state.fiscal_years}")
-            add_debug_info(f"College units found: {st.session_state.college_units}")
-            
-            st.session_state.data_loaded = True
-            st.success("Data loaded successfully!")
-            
+            # Show processing indicator
+            with st.spinner("Processing data... This may take a moment."):
+                dataframes = load_excel_file(tmp_file_path, selected_sheets)
+                add_debug_info("Data loaded from Excel file")
+                
+                for sheet_name, df in dataframes.items():
+                    add_debug_info(f"\nSheet: {sheet_name}")
+                    add_debug_info(f"Shape: {df.shape}")
+                    add_debug_info(f"Columns: {list(df.columns)}")
+                    add_debug_info(f"Missing values:\n{df.isnull().sum()}")
+                
+                # Validate data
+                is_valid, errors = validate_dataframes(dataframes)
+                if not is_valid:
+                    st.error("Data validation failed:")
+                    for error in errors:
+                        st.error(error)
+                    st.stop()
+                
+                add_debug_info("\nData validation passed")
+                
+                # Normalize column names
+                normalized_dataframes = normalize_column_names(dataframes)
+                add_debug_info("\nColumn names normalized")
+                
+                for sheet_name, df in normalized_dataframes.items():
+                    add_debug_info(f"\nNormalized sheet: {sheet_name}")
+                    add_debug_info(f"Columns after normalization: {list(df.columns)}")
+                
+                # Clean data
+                cleaned_dataframes = clean_data(normalized_dataframes)
+                
+                for sheet_name, df in cleaned_dataframes.items():
+                    add_debug_info(f"\nCleaned sheet: {sheet_name}")
+                    add_debug_info(f"Shape after cleaning: {df.shape}")
+                    add_debug_info(f"Columns after cleaning: {list(df.columns)}")
+                    add_debug_info(f"Missing values after cleaning:\n{df.isnull().sum()}")
+                
+                # Store in session state
+                st.session_state.dataframes = cleaned_dataframes.copy()
+                st.session_state.filtered_dataframes = cleaned_dataframes.copy()
+                
+                # Get fiscal years and college units
+                fiscal_years = get_fiscal_years(cleaned_dataframes)
+                st.session_state.fiscal_years = sorted(fiscal_years) if fiscal_years else []
+                st.session_state.college_units = get_college_units(cleaned_dataframes)
+                
+                add_debug_info(f"\nFiscal years found: {st.session_state.fiscal_years}")
+                add_debug_info(f"College units found: {st.session_state.college_units}")
+                
+                st.session_state.data_loaded = True
+                
+                # Calculate processing time
+                processing_time = time.time() - st.session_state.processing_start_time
+                add_debug_info(f"Processing completed in {processing_time:.2f} seconds")
+                
+                st.success("Data loaded successfully!")
+                
+                # Clean up temporary file
+                try:
+                    if tmp_file_path and os.path.exists(tmp_file_path):
+                        os.unlink(tmp_file_path)
+                        add_debug_info(f"Temporary file removed: {tmp_file_path}")
+                except Exception as e:
+                    logger.warning(f"Could not remove temporary file: {str(e)}")
+                
         except Exception as e:
             error_msg = f"Error processing data: {str(e)}"
             logger.error(error_msg, exc_info=True)
