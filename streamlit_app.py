@@ -43,6 +43,7 @@ from modules.visuals import (
     create_co_pi_analysis_chart, create_co_pi_comparison_chart
 )
 from modules.utils import export_to_excel, export_to_csv, ensure_directory_exists
+from modules.components import detailed_data_view, project_details_view, create_expandable_project_list
 
 # Set page config
 st.set_page_config(
@@ -577,12 +578,12 @@ if st.session_state.dataframes:
         # Analysis type
         analysis_type = st.radio(
             "Analysis Type",
-            ["Yearly Trend", "Year-by-Year Details"],
+            ["Yearly Trend", "Year-by-Year Details", "Detailed Project View"],
             horizontal=True,
             index=0
         )
         
-        # Year range filter for trend analysis
+        # Yearly Trend analysis
         if analysis_type == "Yearly Trend":
             # Get min and max years
             min_year = min(st.session_state.fiscal_years) if st.session_state.fiscal_years else 2010
@@ -648,8 +649,8 @@ if st.session_state.dataframes:
             else:
                 st.info("No data available for the selected criteria.")
         
-        # Year-by-year detailed analysis
-        else:
+        # Year-by-Year detailed analysis
+        elif analysis_type == "Year-by-Year Details":
             # Select specific year
             selected_year = st.selectbox(
                 "Select Fiscal Year",
@@ -722,6 +723,94 @@ if st.session_state.dataframes:
                                     st.markdown(f"- {unit}")
                 else:
                     st.info(f"No projects found for fiscal year {selected_year} with {condition_options[condition].lower()} {co_pi_count} Co-PI(s).")
+        
+        # Detailed Project View using the new component
+        else:  # Detailed Project View
+            st.markdown("### Detailed Project Analysis")
+            
+            # Set up filter options
+            filter_options_expander = st.expander("Filter Options", expanded=True)
+            
+            with filter_options_expander:
+                # Year range selection
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Get min and max years
+                    min_year = min(st.session_state.fiscal_years) if st.session_state.fiscal_years else 2010
+                    max_year = max(st.session_state.fiscal_years) if st.session_state.fiscal_years else 2023
+                    
+                    year_filter_type = st.radio(
+                        "Year Filter",
+                        ["All Years", "Year Range", "Single Year"],
+                        horizontal=True
+                    )
+                
+                with col2:
+                    if year_filter_type == "Year Range":
+                        year_range = st.slider(
+                            "Select Year Range",
+                            min_value=min_year,
+                            max_value=max_year,
+                            value=(min_year, max_year)
+                        )
+                        filtered_data = filter_by_fiscal_year_range(
+                            st.session_state.dataframes,
+                            year_range[0],
+                            year_range[1]
+                        )
+                    elif year_filter_type == "Single Year":
+                        selected_year = st.selectbox(
+                            "Select Fiscal Year",
+                            options=sorted(st.session_state.fiscal_years),
+                            index=0 if st.session_state.fiscal_years else None
+                        )
+                        filtered_data = filter_by_fiscal_year(
+                            st.session_state.dataframes,
+                            selected_year
+                        ) if selected_year else {}
+                    else:  # All Years
+                        filtered_data = st.session_state.dataframes
+            
+            if filtered_data:
+                # Get project details
+                projects = get_projects_by_co_pi_count(
+                    filtered_data,
+                    condition,
+                    co_pi_count
+                )
+                
+                if not projects.empty:
+                    # Create a descriptive title based on the filter
+                    if year_filter_type == "All Years":
+                        title = f"Projects {condition_options[condition].lower()} {co_pi_count} Co-PI(s) - All Years"
+                    elif year_filter_type == "Year Range":
+                        title = f"Projects {condition_options[condition].lower()} {co_pi_count} Co-PI(s) - {year_range[0]} to {year_range[1]}"
+                    else:  # Single Year
+                        title = f"Projects {condition_options[condition].lower()} {co_pi_count} Co-PI(s) - FY {selected_year}"
+                    
+                    # Use the new component for detailed project view
+                    create_expandable_project_list(
+                        projects=projects,
+                        title=title,
+                        show_metrics=True,
+                        unique_key="co_pi_projects"
+                    )
+                    
+                    # Add advanced data exploration
+                    st.markdown("### Advanced Data Exploration")
+                    st.markdown("Use the interactive data view below to search, filter, and export project data.")
+                    
+                    # Use the detailed data view component
+                    project_details_view(
+                        projects=projects,
+                        title="Detailed Project Data",
+                        unique_key="co_pi_details"
+                    )
+                else:
+                    st.info(f"No projects found {condition_options[condition].lower()} {co_pi_count} Co-PI(s) for the selected time period.")
+            else:
+                st.info("Please select valid filter options to view project details.")
     
     # Export Data tab
     with tab7:
