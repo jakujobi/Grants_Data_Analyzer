@@ -359,4 +359,228 @@ def filter_by_fiscal_year_range(dataframes: Dict[str, pd.DataFrame], start_year:
         else:
             filtered_dfs[sheet_name] = df.copy()
     
-    return filtered_dfs 
+    return filtered_dfs
+
+def get_projects_by_co_pi_count(dataframes: Dict[str, pd.DataFrame], condition: str, count: int) -> pd.DataFrame:
+    """
+    Get projects based on a condition related to the number of Co-PIs.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        condition: One of 'exactly', 'more_than', 'less_than', 'at_least', 'at_most'
+        count: Number of Co-PIs to compare against
+        
+    Returns:
+        DataFrame containing projects that match the specified condition
+    """
+    if 'AwardsRawData' not in dataframes:
+        print("Warning: AwardsRawData sheet not found")
+        return pd.DataFrame()
+    
+    df = dataframes['AwardsRawData']
+    
+    required_cols = ['grant_code', 'fiscal_year', 'pi', 'co_pi_list']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        print(f"Warning: Required columns missing: {missing_cols}")
+        print(f"Available columns: {list(df.columns)}")
+        return pd.DataFrame()
+    
+    # Group by grant_code and fiscal_year to get unique projects
+    projects = []
+    
+    for (grant_code, fiscal_year), group in df.groupby(['grant_code', 'fiscal_year']):
+        # Get unique PIs for this project
+        pis = group['pi'].dropna().unique().tolist()
+        
+        # Get all Co-PIs for this project
+        all_co_pis = set()
+        for co_pi_list in group['co_pi_list']:
+            if isinstance(co_pi_list, list):
+                all_co_pis.update([cp for cp in co_pi_list if cp and not pd.isna(cp)])
+        
+        # Convert to list and get count
+        co_pis = list(all_co_pis)
+        co_pi_count = len(co_pis)
+        
+        # Check if this project satisfies the condition
+        include_project = False
+        if condition == 'exactly' and co_pi_count == count:
+            include_project = True
+        elif condition == 'more_than' and co_pi_count > count:
+            include_project = True
+        elif condition == 'less_than' and co_pi_count < count:
+            include_project = True
+        elif condition == 'at_least' and co_pi_count >= count:
+            include_project = True
+        elif condition == 'at_most' and co_pi_count <= count:
+            include_project = True
+        
+        if include_project:
+            # Get college units for this project
+            college_units = group['collegeunit'].dropna().unique().tolist()
+            
+            # Get award amount if available
+            award_amount = group['award_amount'].sum() if 'award_amount' in group.columns else None
+            
+            # Add project details to list
+            projects.append({
+                'grant_code': grant_code,
+                'fiscal_year': fiscal_year,
+                'pis': pis,
+                'co_pis': co_pis,
+                'co_pi_count': co_pi_count,
+                'college_units': college_units,
+                'award_amount': award_amount
+            })
+    
+    # Convert to DataFrame
+    result = pd.DataFrame(projects)
+    
+    return result
+
+def get_projects_by_co_pi_count_yearly(dataframes: Dict[str, pd.DataFrame], condition: str, count: int) -> pd.DataFrame:
+    """
+    Get counts of projects based on Co-PI conditions, grouped by fiscal year.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        condition: One of 'exactly', 'more_than', 'less_than', 'at_least', 'at_most'
+        count: Number of Co-PIs to compare against
+        
+    Returns:
+        DataFrame with yearly statistics (fiscal_year, matching_projects, total_projects, etc.)
+    """
+    if 'AwardsRawData' not in dataframes:
+        print("Warning: AwardsRawData sheet not found")
+        return pd.DataFrame()
+    
+    df = dataframes['AwardsRawData']
+    
+    required_cols = ['grant_code', 'fiscal_year', 'pi', 'co_pi_list']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        print(f"Warning: Required columns missing: {missing_cols}")
+        print(f"Available columns: {list(df.columns)}")
+        return pd.DataFrame()
+    
+    # Get all fiscal years
+    fiscal_years = sorted(df['fiscal_year'].dropna().unique())
+    
+    # Initialize results
+    yearly_stats = []
+    
+    # Calculate statistics for each fiscal year
+    for year in fiscal_years:
+        # Filter data for this year
+        year_df = df[df['fiscal_year'] == year]
+        
+        # Get unique projects for this year
+        unique_projects = year_df.groupby(['grant_code', 'fiscal_year'])
+        total_projects = unique_projects.ngroups
+        
+        # Count projects matching the Co-PI condition
+        matching_projects = 0
+        total_pis = 0
+        total_co_pis = 0
+        
+        for (grant_code, _), group in unique_projects:
+            # Count unique PIs
+            unique_pis = group['pi'].dropna().nunique()
+            total_pis += unique_pis
+            
+            # Get all Co-PIs for this project
+            all_co_pis = set()
+            for co_pi_list in group['co_pi_list']:
+                if isinstance(co_pi_list, list):
+                    all_co_pis.update([cp for cp in co_pi_list if cp and not pd.isna(cp)])
+            
+            # Get Co-PI count
+            co_pi_count = len(all_co_pis)
+            total_co_pis += co_pi_count
+            
+            # Check if this project satisfies the condition
+            if condition == 'exactly' and co_pi_count == count:
+                matching_projects += 1
+            elif condition == 'more_than' and co_pi_count > count:
+                matching_projects += 1
+            elif condition == 'less_than' and co_pi_count < count:
+                matching_projects += 1
+            elif condition == 'at_least' and co_pi_count >= count:
+                matching_projects += 1
+            elif condition == 'at_most' and co_pi_count <= count:
+                matching_projects += 1
+        
+        # Add statistics for this year
+        yearly_stats.append({
+            'fiscal_year': year,
+            'matching_projects': matching_projects,
+            'total_projects': total_projects,
+            'total_pis': total_pis,
+            'total_co_pis': total_co_pis,
+            'matching_percentage': (matching_projects / total_projects * 100) if total_projects > 0 else 0
+        })
+    
+    # Convert to DataFrame
+    result = pd.DataFrame(yearly_stats)
+    
+    return result
+
+def get_project_details_by_co_pi_filter(dataframes: Dict[str, pd.DataFrame], fiscal_year: int, 
+                                       condition: str, count: int) -> pd.DataFrame:
+    """
+    Get detailed information about projects that match the Co-PI filter for a specific year.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        fiscal_year: The fiscal year to filter by
+        condition: One of 'exactly', 'more_than', 'less_than', 'at_least', 'at_most'
+        count: Number of Co-PIs to compare against
+        
+    Returns:
+        DataFrame with detailed project information
+    """
+    # Filter by fiscal year first
+    year_dataframes = filter_by_fiscal_year(dataframes, fiscal_year)
+    
+    # Get projects matching the Co-PI condition
+    projects = get_projects_by_co_pi_count(year_dataframes, condition, count)
+    
+    if projects.empty:
+        return projects
+    
+    # Expand the projects DataFrame for better display
+    detailed_rows = []
+    
+    for _, project in projects.iterrows():
+        # Basic project info
+        basic_info = {
+            'grant_code': project['grant_code'],
+            'fiscal_year': project['fiscal_year'],
+            'co_pi_count': project['co_pi_count'],
+            'award_amount': project['award_amount']
+        }
+        
+        # Add PIs
+        for i, pi in enumerate(project['pis']):
+            pi_key = f'pi_{i+1}'
+            basic_info[pi_key] = pi
+        
+        # Add Co-PIs
+        for i, co_pi in enumerate(project['co_pis']):
+            co_pi_key = f'co_pi_{i+1}'
+            basic_info[co_pi_key] = co_pi
+        
+        # Add College Units
+        for i, unit in enumerate(project['college_units']):
+            unit_key = f'college_unit_{i+1}'
+            basic_info[unit_key] = unit
+        
+        detailed_rows.append(basic_info)
+    
+    # Convert to DataFrame
+    detailed_df = pd.DataFrame(detailed_rows)
+    
+    return detailed_df 

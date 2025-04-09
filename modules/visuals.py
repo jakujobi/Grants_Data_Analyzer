@@ -331,4 +331,148 @@ def save_figure(fig: plt.Figure, filename: str, dpi: int = 300) -> None:
     except Exception as e:
         print(f"Error saving figure: {e}")
     finally:
-        plt.close(fig) 
+        plt.close(fig)
+
+def create_co_pi_analysis_chart(yearly_data: pd.DataFrame, metric: str = 'matching_projects') -> plt.Figure:
+    """
+    Create a visualization for Co-PI analysis showing yearly trends.
+    
+    Args:
+        yearly_data: DataFrame with yearly statistics from get_projects_by_co_pi_count_yearly
+        metric: Which metric to visualize ('matching_projects', 'matching_percentage', etc.)
+        
+    Returns:
+        Matplotlib Figure object
+    """
+    if yearly_data.empty:
+        # Create an empty figure with a message
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.text(0.5, 0.5, "No data available", ha='center', va='center', fontsize=14)
+        ax.set_axis_off()
+        return fig
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Sort by fiscal year
+    data = yearly_data.sort_values('fiscal_year')
+    
+    # Set up labels and titles based on the metric
+    if metric == 'matching_projects':
+        y_label = 'Number of Projects'
+        title = 'Projects Matching Co-PI Criteria by Year'
+        color = 'steelblue'
+    elif metric == 'matching_percentage':
+        y_label = 'Percentage (%)'
+        title = 'Percentage of Projects Matching Co-PI Criteria by Year'
+        color = 'forestgreen'
+    elif metric == 'total_co_pis':
+        y_label = 'Number of Co-PIs'
+        title = 'Total Co-PIs by Year'
+        color = 'darkorange'
+    else:
+        y_label = 'Count'
+        title = f'{metric.replace("_", " ").title()} by Year'
+        color = 'steelblue'
+    
+    # Create bar chart
+    bars = ax.bar(data['fiscal_year'].astype(str), data[metric], color=color, alpha=0.8)
+    
+    # Add value labels on top of bars
+    for bar in bars:
+        height = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                f'{height:.1f}' if metric == 'matching_percentage' else f'{int(height)}',
+                ha='center', va='bottom', fontsize=10)
+    
+    # Set labels and title
+    ax.set_xlabel('Fiscal Year', fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    
+    # Add grid
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Customize x-axis labels
+    plt.xticks(rotation=45)
+    
+    # Add totals as a text annotation
+    total_projects = data['total_projects'].sum()
+    total_matches = data['matching_projects'].sum()
+    overall_percentage = (total_matches / total_projects * 100) if total_projects > 0 else 0
+    
+    ax.text(0.02, 0.97, 
+            f"Total Projects: {total_projects}\n"
+            f"Total Matching: {total_matches}\n"
+            f"Overall: {overall_percentage:.1f}%",
+            transform=ax.transAxes, fontsize=10,
+            verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig
+
+def create_co_pi_comparison_chart(yearly_data: pd.DataFrame) -> plt.Figure:
+    """
+    Create a comparison chart showing projects matching criteria vs total projects.
+    
+    Args:
+        yearly_data: DataFrame with yearly statistics from get_projects_by_co_pi_count_yearly
+        
+    Returns:
+        Matplotlib Figure object
+    """
+    if yearly_data.empty:
+        # Create an empty figure with a message
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.text(0.5, 0.5, "No data available", ha='center', va='center', fontsize=14)
+        ax.set_axis_off()
+        return fig
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Sort by fiscal year
+    data = yearly_data.sort_values('fiscal_year')
+    
+    # Set up x positions
+    years = data['fiscal_year'].astype(str)
+    x = np.arange(len(years))
+    width = 0.35
+    
+    # Create grouped bar chart
+    matched_bars = ax.bar(x - width/2, data['matching_projects'], width, label='Matching Projects', color='steelblue')
+    total_bars = ax.bar(x + width/2, data['total_projects'], width, label='Total Projects', color='lightgray')
+    
+    # Add value labels on top of bars
+    for bars in [matched_bars, total_bars]:
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                    f'{int(height)}',
+                    ha='center', va='bottom', fontsize=10)
+    
+    # Add percentage labels on matched bars
+    for i, (bar, percentage) in enumerate(zip(matched_bars, data['matching_percentage'])):
+        ax.text(bar.get_x() + bar.get_width()/2., bar.get_height()/2,
+                f'{percentage:.1f}%',
+                ha='center', va='center', fontsize=9, color='white', fontweight='bold')
+    
+    # Set labels and title
+    ax.set_xlabel('Fiscal Year', fontsize=12)
+    ax.set_ylabel('Number of Projects', fontsize=12)
+    ax.set_title('Matching Projects vs Total Projects by Year', fontsize=14, fontweight='bold')
+    
+    # Set x-axis ticks
+    ax.set_xticks(x)
+    ax.set_xticklabels(years, rotation=45)
+    
+    # Add grid and legend
+    ax.grid(axis='y', linestyle='--', alpha=0.7)
+    ax.legend()
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig 

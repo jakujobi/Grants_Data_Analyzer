@@ -33,11 +33,14 @@ from modules.analysis import (
     count_multi_college_projects, count_multi_co_pi_projects,
     get_colleges_with_most_collaborators, get_project_counts_by_person,
     get_project_counts_by_college, get_summary_counts,
-    filter_by_fiscal_year, filter_by_fiscal_year_range
+    filter_by_fiscal_year, filter_by_fiscal_year_range,
+    get_projects_by_co_pi_count, get_projects_by_co_pi_count_yearly,
+    get_project_details_by_co_pi_filter
 )
 from modules.visuals import (
     create_bar_chart, create_pie_chart, create_line_chart,
-    create_summary_dashboard, save_figure
+    create_summary_dashboard, save_figure,
+    create_co_pi_analysis_chart, create_co_pi_comparison_chart
 )
 from modules.utils import export_to_excel, export_to_csv, ensure_directory_exists
 
@@ -383,9 +386,9 @@ with st.sidebar:
 # Main content
 if st.session_state.dataframes:
     # Analysis tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Summary", "Multi-College Projects", "Collaborators", 
-        "Project Counts", "College Analysis", "Export Data"
+        "Project Counts", "College Analysis", "Projects with X Co-PIs", "Export Data"
     ])
     
     # Summary tab
@@ -525,8 +528,203 @@ if st.session_state.dataframes:
         )
         st.pyplot(fig)
     
-    # Export Data tab
+    # Projects with X Co-PIs tab
     with tab6:
+        st.markdown(f'<h2 class="sub-header">Projects with X Co-PIs Analysis</h2>', unsafe_allow_html=True)
+        
+        # Create columns for filter controls
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+        
+        with filter_col1:
+            # Co-PI filter condition
+            condition_options = {
+                "at_least": "At Least",
+                "at_most": "At Most", 
+                "exactly": "Exactly",
+                "more_than": "More Than", 
+                "less_than": "Less Than"
+            }
+            condition = st.selectbox(
+                "Co-PI Count Condition",
+                options=list(condition_options.keys()),
+                format_func=lambda x: condition_options[x],
+                index=0
+            )
+        
+        with filter_col2:
+            # Co-PI count
+            co_pi_count = st.number_input(
+                "Number of Co-PIs",
+                min_value=0,
+                max_value=20,
+                value=0
+            )
+        
+        with filter_col3:
+            # Visualization metric
+            metric_options = {
+                "matching_projects": "Matching Projects Count",
+                "matching_percentage": "Matching Projects Percentage",
+                "total_co_pis": "Total Co-PIs Count"
+            }
+            visualization_metric = st.selectbox(
+                "Visualization Metric",
+                options=list(metric_options.keys()),
+                format_func=lambda x: metric_options[x],
+                index=0
+            )
+        
+        # Analysis type
+        analysis_type = st.radio(
+            "Analysis Type",
+            ["Yearly Trend", "Year-by-Year Details"],
+            horizontal=True,
+            index=0
+        )
+        
+        # Year range filter for trend analysis
+        if analysis_type == "Yearly Trend":
+            # Get min and max years
+            min_year = min(st.session_state.fiscal_years) if st.session_state.fiscal_years else 2010
+            max_year = max(st.session_state.fiscal_years) if st.session_state.fiscal_years else 2023
+            
+            year_range = st.slider(
+                "Year Range",
+                min_value=min_year,
+                max_value=max_year,
+                value=(min_year, max_year)
+            )
+            
+            # Filter data by year range
+            year_filtered_data = filter_by_fiscal_year_range(
+                st.session_state.dataframes, 
+                year_range[0], 
+                year_range[1]
+            )
+            
+            # Get yearly statistics
+            yearly_data = get_projects_by_co_pi_count_yearly(
+                year_filtered_data, 
+                condition, 
+                co_pi_count
+            )
+            
+            # Display results
+            st.markdown(f"### Projects {condition_options[condition].lower()} {co_pi_count} Co-PI(s)")
+            
+            # Summary metrics
+            if not yearly_data.empty:
+                # Only show info if we have data
+                total_projects = yearly_data['total_projects'].sum()
+                matching_projects = yearly_data['matching_projects'].sum()
+                percentage = (matching_projects / total_projects * 100) if total_projects > 0 else 0
+                
+                # Create metric columns
+                metric_col1, metric_col2, metric_col3 = st.columns(3)
+                
+                with metric_col1:
+                    st.metric("Total Projects", f"{total_projects:,}")
+                    
+                with metric_col2:
+                    st.metric("Matching Projects", f"{matching_projects:,}")
+                    
+                with metric_col3:
+                    st.metric("Percentage", f"{percentage:.1f}%")
+                
+                # Visualizations
+                viz_tabs = st.tabs(["Bar Chart", "Comparison Chart"])
+                
+                with viz_tabs[0]:
+                    fig = create_co_pi_analysis_chart(yearly_data, visualization_metric)
+                    st.pyplot(fig)
+                
+                with viz_tabs[1]:
+                    fig = create_co_pi_comparison_chart(yearly_data)
+                    st.pyplot(fig)
+                
+                # Show data table
+                with st.expander("View Data Table"):
+                    st.dataframe(yearly_data)
+            else:
+                st.info("No data available for the selected criteria.")
+        
+        # Year-by-year detailed analysis
+        else:
+            # Select specific year
+            selected_year = st.selectbox(
+                "Select Fiscal Year",
+                options=sorted(st.session_state.fiscal_years),
+                index=0 if st.session_state.fiscal_years else None
+            )
+            
+            if selected_year:
+                # Get detailed project data
+                detailed_data = get_project_details_by_co_pi_filter(
+                    st.session_state.dataframes,
+                    selected_year,
+                    condition,
+                    co_pi_count
+                )
+                
+                if not detailed_data.empty:
+                    # Show summary
+                    st.markdown(f"### Projects for Fiscal Year {selected_year}")
+                    st.markdown(f"Found **{len(detailed_data)}** projects {condition_options[condition].lower()} {co_pi_count} Co-PI(s)")
+                    
+                    # Display the data table with column configuration
+                    st.dataframe(
+                        detailed_data,
+                        use_container_width=True,
+                        column_config={
+                            "grant_code": st.column_config.TextColumn("Grant Code"),
+                            "fiscal_year": st.column_config.NumberColumn("Fiscal Year"),
+                            "co_pi_count": st.column_config.NumberColumn("Co-PI Count"),
+                            "award_amount": st.column_config.NumberColumn("Award Amount", format="$%.2f")
+                        }
+                    )
+                    
+                    # Get raw project details for exploration
+                    projects = get_projects_by_co_pi_count(
+                        filter_by_fiscal_year(st.session_state.dataframes, selected_year),
+                        condition,
+                        co_pi_count
+                    )
+                    
+                    # Show detailed project information in expandable sections
+                    if not projects.empty:
+                        st.markdown("### Project Details")
+                        for i, project in projects.iterrows():
+                            with st.expander(f"Project: {project['grant_code']} (FY {project['fiscal_year']})"):
+                                # Project overview
+                                st.markdown(f"**Grant Code:** {project['grant_code']}")
+                                st.markdown(f"**Fiscal Year:** {project['fiscal_year']}")
+                                st.markdown(f"**Co-PI Count:** {project['co_pi_count']}")
+                                
+                                if project['award_amount'] is not None:
+                                    st.markdown(f"**Award Amount:** ${project['award_amount']:,.2f}")
+                                
+                                # PIs
+                                st.markdown("**Principal Investigators:**")
+                                for pi in project['pis']:
+                                    st.markdown(f"- {pi}")
+                                
+                                # Co-PIs
+                                st.markdown("**Co-Principal Investigators:**")
+                                if project['co_pis']:
+                                    for co_pi in project['co_pis']:
+                                        st.markdown(f"- {co_pi}")
+                                else:
+                                    st.markdown("*No Co-PIs*")
+                                
+                                # College Units
+                                st.markdown("**College Units:**")
+                                for unit in project['college_units']:
+                                    st.markdown(f"- {unit}")
+                else:
+                    st.info(f"No projects found for fiscal year {selected_year} with {condition_options[condition].lower()} {co_pi_count} Co-PI(s).")
+    
+    # Export Data tab
+    with tab7:
         st.markdown(f'<h2 class="sub-header">Export Data</h2>', unsafe_allow_html=True)
         
         # Create output directory
