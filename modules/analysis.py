@@ -583,4 +583,384 @@ def get_project_details_by_co_pi_filter(dataframes: Dict[str, pd.DataFrame], fis
     # Convert to DataFrame
     detailed_df = pd.DataFrame(detailed_rows)
     
-    return detailed_df 
+    return detailed_df
+
+def identify_multi_college_projects(dataframes: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Identifies projects where the PI and Co-PIs come from more than one college.
+    
+    A project is considered "multi-college" if the PI and Co-PIs collectively represent
+    more than one unique college unit.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        
+    Returns:
+        DataFrame containing project details with a 'is_multi_college' flag and 'college_count'
+    """
+    # Add debug info
+    print("\n--- Starting multi-college project identification ---")
+    
+    if 'AwardsRawData' not in dataframes:
+        print("Warning: AwardsRawData sheet not found")
+        return pd.DataFrame()
+    
+    df = dataframes['AwardsRawData']
+    
+    required_cols = ['grant_code', 'fiscal_year', 'pi', 'co_pi_list', 'collegeunit']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        print(f"Warning: Required columns missing: {missing_cols}")
+        print(f"Available columns: {list(df.columns)}")
+        return pd.DataFrame()
+    
+    # Check for co-pi data
+    has_copi_sheet = 'AwardsCoPIsRawData' in dataframes
+    print(f"Co-PI data sheet available: {has_copi_sheet}")
+    
+    if has_copi_sheet:
+        copi_df = dataframes['AwardsCoPIsRawData']
+        print(f"Co-PI data columns: {list(copi_df.columns)}")
+    
+    # Create a person (PI or Co-PI) to college mapping 
+    person_to_college = {}
+    
+    # First add the PIs to the mapping from the main awards sheet
+    for _, row in df.iterrows():
+        if not pd.isna(row['pi']) and not pd.isna(row['collegeunit']):
+            person_to_college[row['pi']] = row['collegeunit']
+    
+    # If we have the co-pi sheet, get college info from there
+    if has_copi_sheet and 'co_pi' in copi_df.columns and 'collegeunit' in copi_df.columns:
+        for _, row in copi_df.iterrows():
+            if not pd.isna(row['co_pi']) and not pd.isna(row['collegeunit']):
+                person_to_college[row['co_pi']] = row['collegeunit']
+    
+    print(f"Created person-to-college mapping with {len(person_to_college)} entries")
+    
+    # Initialize list to collect project data
+    project_data = []
+    
+    # Group by unique projects (grant_code + fiscal_year)
+    for (grant_code, fiscal_year), project_group in df.groupby(['grant_code', 'fiscal_year']):
+        # Get all colleges associated with PIs and Co-PIs for this project
+        colleges = set()
+        
+        # Add PI college(s) directly from the project group
+        pi_names = project_group['pi'].dropna().unique()
+        pi_colleges = project_group['collegeunit'].dropna().unique()
+        
+        for college in pi_colleges:
+            if college and not pd.isna(college):
+                colleges.add(college)
+        
+        # Collect all co-pis from the main sheet
+        co_pis = []
+        for co_pi_list in project_group['co_pi_list']:
+            if isinstance(co_pi_list, list):
+                co_pis.extend([cp for cp in co_pi_list if cp and not pd.isna(cp)])
+        
+        # Try to find colleges for Co-PIs using the person-to-college mapping
+        for co_pi in co_pis:
+            if co_pi in person_to_college:
+                co_pi_college = person_to_college[co_pi]
+                if co_pi_college and not pd.isna(co_pi_college):
+                    colleges.add(co_pi_college)
+        
+        # Also check Co-PI sheet directly for this grant code
+        if has_copi_sheet and 'grant_code' in copi_df.columns:
+            grant_copis = copi_df[copi_df['grant_code'] == grant_code]
+            
+            # If there's co-pi college data for this grant, add those colleges
+            if not grant_copis.empty and 'collegeunit' in grant_copis.columns:
+                for _, row in grant_copis.iterrows():
+                    if not pd.isna(row['collegeunit']):
+                        colleges.add(row['collegeunit'])
+            
+            # Also add any Co-PIs from this data that we didn't already have
+            if not grant_copis.empty and 'co_pi' in grant_copis.columns:
+                for _, row in grant_copis.iterrows():
+                    if not pd.isna(row['co_pi']) and row['co_pi'] not in co_pis:
+                        co_pis.append(row['co_pi'])
+        
+        # Determine if this is a multi-college project
+        college_count = len(colleges)
+        is_multi_college = college_count > 1
+        
+        # Add project to the list
+        project_data.append({
+            'grant_code': grant_code,
+            'fiscal_year': fiscal_year,
+            'pis': pi_names.tolist(),
+            'co_pis': co_pis,
+            'colleges': list(colleges),
+            'college_count': college_count,
+            'is_multi_college': is_multi_college,
+            'award_amount': project_group['award_amount'].sum() if 'award_amount' in project_group.columns else None
+        })
+    
+    result_df = pd.DataFrame(project_data)
+    
+    # Debug info - print distribution of college counts
+    if not result_df.empty:
+        counts = result_df['college_count'].value_counts().sort_index()
+        print("\nDistribution of college counts in projects:")
+        for count, num_projects in counts.items():
+            print(f"  {count} college(s): {num_projects} projects")
+        
+        multi_count = result_df['is_multi_college'].sum()
+        total = len(result_df)
+        print(f"Multi-college projects: {multi_count} out of {total} ({multi_count/total*100:.1f}%)")
+        
+        # Show a few examples of multi-college projects
+        if multi_count > 0:
+            print("\nExample multi-college projects:")
+            examples = result_df[result_df['is_multi_college']].head(3)
+            for _, project in examples.iterrows():
+                print(f"  Grant: {project['grant_code']}, Year: {project['fiscal_year']}")
+                print(f"  PIs: {project['pis']}")
+                print(f"  Co-PIs: {project['co_pis']}")
+                print(f"  Colleges: {project['colleges']}")
+                print()
+    else:
+        print("No project data found")
+    
+    print("--- Finished multi-college project identification ---\n")
+    return result_df
+
+def get_multi_college_project_yearly_stats(dataframes: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Calculate yearly statistics for multi-college projects.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        
+    Returns:
+        DataFrame with yearly statistics for multi-college projects
+    """
+    # Get project data
+    project_data = identify_multi_college_projects(dataframes)
+    
+    if project_data.empty:
+        return pd.DataFrame()
+    
+    # Group by fiscal year and calculate metrics
+    yearly_stats = []
+    
+    for fiscal_year, year_group in project_data.groupby('fiscal_year'):
+        # Count projects
+        total_projects = len(year_group)
+        multi_college_projects = year_group['is_multi_college'].sum()
+        single_college_projects = total_projects - multi_college_projects
+        
+        # Calculate percentages
+        multi_college_percentage = (multi_college_projects / total_projects * 100) if total_projects > 0 else 0
+        
+        # Calculate average colleges per project
+        avg_colleges_all = year_group['college_count'].mean()
+        avg_colleges_multi = year_group[year_group['is_multi_college']]['college_count'].mean() if multi_college_projects > 0 else 0
+        
+        # Calculate average award amounts if available
+        avg_award_all = None
+        avg_award_multi = None
+        avg_award_single = None
+        
+        if 'award_amount' in year_group.columns:
+            # Filter to non-null awards
+            valid_awards = year_group.dropna(subset=['award_amount'])
+            if not valid_awards.empty:
+                avg_award_all = valid_awards['award_amount'].mean()
+            
+            valid_multi = year_group[year_group['is_multi_college']].dropna(subset=['award_amount'])
+            if not valid_multi.empty and multi_college_projects > 0:
+                avg_award_multi = valid_multi['award_amount'].mean()
+            
+            valid_single = year_group[~year_group['is_multi_college']].dropna(subset=['award_amount'])
+            if not valid_single.empty and single_college_projects > 0:
+                avg_award_single = valid_single['award_amount'].mean()
+        
+        # Add statistics for this year
+        yearly_stats.append({
+            'fiscal_year': fiscal_year,
+            'total_projects': total_projects,
+            'multi_college_projects': multi_college_projects,
+            'single_college_projects': single_college_projects,
+            'multi_college_percentage': multi_college_percentage,
+            'avg_colleges_per_project': avg_colleges_all,
+            'avg_colleges_per_multi_project': avg_colleges_multi,
+            'avg_award_all_projects': avg_award_all,
+            'avg_award_multi_projects': avg_award_multi,
+            'avg_award_single_projects': avg_award_single
+        })
+    
+    # Convert to DataFrame and sort by fiscal year
+    result = pd.DataFrame(yearly_stats).sort_values('fiscal_year')
+    
+    return result
+
+def get_college_collaboration_metrics(dataframes: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Calculate collaboration metrics for each college.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        
+    Returns:
+        DataFrame with collaboration metrics for each college
+    """
+    # Get project data
+    project_data = identify_multi_college_projects(dataframes)
+    
+    if project_data.empty:
+        return pd.DataFrame()
+    
+    # Initialize metrics
+    college_metrics = {}
+    
+    # Analyze each project
+    for _, project in project_data.iterrows():
+        colleges = project['colleges']
+        
+        # Skip if no college information
+        if not colleges:
+            continue
+        
+        # Initialize college entries if needed
+        for college in colleges:
+            if college not in college_metrics:
+                college_metrics[college] = {
+                    'college': college,
+                    'total_projects': 0,
+                    'multi_college_projects': 0,
+                    'collaboration_partners': set(),
+                    'pi_count': 0,
+                    'co_pi_count': 0
+                }
+        
+        # Update metrics for each college in this project
+        for college in colleges:
+            college_metrics[college]['total_projects'] += 1
+            
+            # Update multi-college project count
+            if project['is_multi_college']:
+                college_metrics[college]['multi_college_projects'] += 1
+                
+                # Update collaboration partners
+                for partner in colleges:
+                    if partner != college:
+                        college_metrics[college]['collaboration_partners'].add(partner)
+            
+            # Update PI and Co-PI counts
+            # This is a simplification - we don't have exact mapping of PI/Co-PI to college
+            college_metrics[college]['pi_count'] += len(project['pis'])
+            college_metrics[college]['co_pi_count'] += len(project['co_pis'])
+    
+    # Convert to list of dictionaries
+    metrics_list = []
+    for college, metrics in college_metrics.items():
+        metrics_list.append({
+            'college': metrics['college'],
+            'total_projects': metrics['total_projects'],
+            'multi_college_projects': metrics['multi_college_projects'],
+            'multi_college_percentage': (metrics['multi_college_projects'] / metrics['total_projects'] * 100) 
+                                       if metrics['total_projects'] > 0 else 0,
+            'collaboration_partner_count': len(metrics['collaboration_partners']),
+            'collaboration_partners': list(metrics['collaboration_partners']),
+            'pi_count': metrics['pi_count'],
+            'co_pi_count': metrics['co_pi_count']
+        })
+    
+    return pd.DataFrame(metrics_list).sort_values('multi_college_projects', ascending=False)
+
+def get_multi_college_vs_single_college_comparison(dataframes: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
+    """
+    Compare metrics between multi-college and single-college projects.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        
+    Returns:
+        Dictionary with comparison metrics
+    """
+    # Get project data
+    project_data = identify_multi_college_projects(dataframes)
+    
+    if project_data.empty:
+        return {
+            'total_projects': 0,
+            'multi_college_projects': 0,
+            'single_college_projects': 0,
+            'multi_college_percentage': 0,
+            'avg_colleges_multi': 0,
+            'avg_award_multi': None,
+            'avg_award_single': None,
+            'award_difference': None,
+            'award_difference_percentage': None
+        }
+    
+    # Count projects
+    total_projects = len(project_data)
+    multi_college_projects = project_data['is_multi_college'].sum()
+    single_college_projects = total_projects - multi_college_projects
+    
+    # Calculate percentages
+    multi_college_percentage = (multi_college_projects / total_projects * 100) if total_projects > 0 else 0
+    
+    # Calculate average colleges per multi-college project
+    avg_colleges_multi = project_data[project_data['is_multi_college']]['college_count'].mean() if multi_college_projects > 0 else 0
+    
+    # Calculate average award amounts
+    avg_award_multi = None
+    avg_award_single = None
+    award_difference = None
+    award_difference_percentage = None
+    
+    if 'award_amount' in project_data.columns:
+        multi_college_df = project_data[project_data['is_multi_college']].dropna(subset=['award_amount'])
+        single_college_df = project_data[~project_data['is_multi_college']].dropna(subset=['award_amount'])
+        
+        if not multi_college_df.empty and multi_college_projects > 0:
+            avg_award_multi = multi_college_df['award_amount'].mean()
+        
+        if not single_college_df.empty and single_college_projects > 0:
+            avg_award_single = single_college_df['award_amount'].mean()
+        
+        if avg_award_multi is not None and avg_award_single is not None:
+            award_difference = avg_award_multi - avg_award_single
+            award_difference_percentage = (award_difference / avg_award_single * 100) if avg_award_single > 0 else 0
+    
+    return {
+        'total_projects': total_projects,
+        'multi_college_projects': multi_college_projects,
+        'single_college_projects': single_college_projects,
+        'multi_college_percentage': multi_college_percentage,
+        'avg_colleges_multi': avg_colleges_multi,
+        'avg_award_multi': avg_award_multi,
+        'avg_award_single': avg_award_single,
+        'award_difference': award_difference,
+        'award_difference_percentage': award_difference_percentage
+    }
+
+def get_multi_college_projects_by_year(dataframes: Dict[str, pd.DataFrame], fiscal_year: int) -> pd.DataFrame:
+    """
+    Get multi-college projects for a specific fiscal year.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        fiscal_year: The fiscal year to filter by
+        
+    Returns:
+        DataFrame containing multi-college projects for the specified year
+    """
+    # Get all project data
+    project_data = identify_multi_college_projects(dataframes)
+    
+    if project_data.empty:
+        return pd.DataFrame()
+    
+    # Filter by fiscal year and multi-college flag
+    filtered_data = project_data[(project_data['fiscal_year'] == fiscal_year) & 
+                                (project_data['is_multi_college'])]
+    
+    return filtered_data 

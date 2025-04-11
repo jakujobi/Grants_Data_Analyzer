@@ -35,12 +35,18 @@ from modules.analysis import (
     get_project_counts_by_college, get_summary_counts,
     filter_by_fiscal_year, filter_by_fiscal_year_range,
     get_projects_by_co_pi_count, get_projects_by_co_pi_count_yearly,
-    get_project_details_by_co_pi_filter
+    get_project_details_by_co_pi_filter,
+    identify_multi_college_projects, get_multi_college_project_yearly_stats,
+    get_college_collaboration_metrics, get_multi_college_vs_single_college_comparison,
+    get_multi_college_projects_by_year
 )
 from modules.visuals import (
     create_bar_chart, create_pie_chart, create_line_chart,
     create_summary_dashboard, save_figure,
-    create_co_pi_analysis_chart, create_co_pi_comparison_chart
+    create_co_pi_analysis_chart, create_co_pi_comparison_chart,
+    create_multi_college_trend_chart, create_multi_vs_single_college_comparison_chart,
+    create_college_collaboration_chart, create_avg_colleges_per_project_chart,
+    create_multi_college_dashboard
 )
 from modules.utils import export_to_excel, export_to_csv, ensure_directory_exists
 from modules.components import detailed_data_view, project_details_view, create_expandable_project_list
@@ -387,9 +393,10 @@ with st.sidebar:
 # Main content
 if st.session_state.dataframes:
     # Analysis tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "Summary", "Multi-College Projects", "Collaborators", 
-        "Project Counts", "College Analysis", "Projects with X Co-PIs", "Export Data"
+        "Project Counts", "College Analysis", "Projects with X Co-PIs", 
+        "Multi-College Projects Analyzer", "Export Data"
     ])
     
     # Summary tab
@@ -513,15 +520,6 @@ if st.session_state.dataframes:
         st.dataframe(college_data)
         
         # Create visualization
-        fig = create_bar_chart(
-            college_data, 'collegeunit', 'project_count',
-            'Projects per College',
-            x_label='College',
-            y_label='Number of Projects'
-        )
-        st.pyplot(fig)
-        
-        # Create pie chart
         fig = create_pie_chart(
             college_data, 'project_count', 'collegeunit',
             'Project Distribution by College',
@@ -812,8 +810,406 @@ if st.session_state.dataframes:
             else:
                 st.info("Please select valid filter options to view project details.")
     
-    # Export Data tab
+    # New Multi-College Projects Analyzer tab
     with tab7:
+        st.markdown(f'<h2 class="sub-header">Multi-College Projects Analyzer</h2>', unsafe_allow_html=True)
+        
+        # Description of what constitutes a multi-college project
+        with st.expander("What is a Multi-College Project?", expanded=False):
+            st.markdown("""
+            ### Multi-College Project Definition
+            
+            In this analysis, a project is considered a **multi-college project** when the PI and/or Co-PIs collectively represent more than one college. For example:
+            
+            - **Project A:** PI from Engineering, Co-PI from Natural Sciences → *Multi-college (2 colleges)*
+            - **Project B:** PI and all Co-PIs from Engineering → *Not multi-college (1 college)*
+            - **Project C:** PI from Engineering, one Co-PI from Natural Sciences, another Co-PI from Engineering → *Multi-college (2 colleges)*
+            - **Project D:** PI from Engineering, one Co-PI from Natural Sciences, one Co-PI from Engineering, one Co-PI from Nursing → *Multi-college (3 colleges)*
+            """)
+        
+        # Compute multi-college project data
+        with st.spinner("Analyzing multi-college projects..."):
+            # Get overall comparison data
+            comparison_data = get_multi_college_vs_single_college_comparison(st.session_state.filtered_dataframes)
+            
+            # Get yearly statistics
+            yearly_stats = get_multi_college_project_yearly_stats(st.session_state.filtered_dataframes)
+            
+            # Get college collaboration metrics
+            college_metrics = get_college_collaboration_metrics(st.session_state.filtered_dataframes)
+        
+        # Add debug information
+        with st.expander("Debug Information", expanded=False):
+            st.markdown("### Data Validation")
+            
+            # Check for AwardsRawData sheet
+            if 'AwardsRawData' in st.session_state.filtered_dataframes:
+                st.success("✅ AwardsRawData sheet found")
+                
+                # Check for required columns
+                awards_df = st.session_state.filtered_dataframes['AwardsRawData']
+                required_cols = ['grant_code', 'fiscal_year', 'pi', 'co_pi_list', 'collegeunit']
+                missing_cols = [col for col in required_cols if col not in awards_df.columns]
+                
+                if not missing_cols:
+                    st.success(f"✅ All required columns found: {', '.join(required_cols)}")
+                else:
+                    st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
+                    st.info(f"Available columns: {', '.join(awards_df.columns)}")
+                
+                # Show collegeunit values
+                if 'collegeunit' in awards_df.columns:
+                    unique_colleges = awards_df['collegeunit'].dropna().unique()
+                    st.markdown(f"**Unique College Units:** {len(unique_colleges)}")
+                    st.write(unique_colleges)
+            else:
+                st.error("❌ AwardsRawData sheet not found")
+            
+            # Check for AwardsCoPIsRawData sheet
+            if 'AwardsCoPIsRawData' in st.session_state.filtered_dataframes:
+                st.success("✅ AwardsCoPIsRawData sheet found")
+                
+                # Check for columns
+                co_pi_df = st.session_state.filtered_dataframes['AwardsCoPIsRawData']
+                st.markdown(f"**Available columns:** {', '.join(co_pi_df.columns)}")
+                
+                if 'collegeunit' in co_pi_df.columns:
+                    unique_colleges = co_pi_df['collegeunit'].dropna().unique()
+                    st.markdown(f"**Unique College Units in Co-PI data:** {len(unique_colleges)}")
+                    st.write(unique_colleges)
+            else:
+                st.warning("⚠️ AwardsCoPIsRawData sheet not found")
+            
+            # Show multi-college project counts
+            st.markdown("### Multi-College Project Counts")
+            st.json(comparison_data)
+        
+        # Create tabs for different analysis views
+        analysis_tabs = st.tabs([
+            "Dashboard", "Yearly Trends", "College Comparisons", "Detailed Projects", "Funding Analysis"
+        ])
+        
+        # Dashboard tab (overview)
+        with analysis_tabs[0]:
+            st.markdown("### Multi-College Projects Dashboard")
+            
+            # Display summary metrics
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric(
+                    "Multi-College Projects", 
+                    f"{comparison_data['multi_college_projects']:,}",
+                    f"{comparison_data['multi_college_percentage']:.1f}% of total"
+                )
+            
+            with col2:
+                st.metric(
+                    "Avg. Colleges per Project", 
+                    f"{comparison_data['avg_colleges_multi']:.2f}"
+                )
+            
+            with col3:
+                if comparison_data['award_difference_percentage'] is not None:
+                    label = "Funding Difference"
+                    value = f"{abs(comparison_data['award_difference_percentage']):.1f}%"
+                    delta = "more" if comparison_data['award_difference_percentage'] > 0 else "less"
+                    st.metric(label, value, delta)
+                else:
+                    st.metric("Funding Data", "Not Available")
+            
+            # Raw project data exploration
+            if st.session_state.filtered_dataframes:
+                # Get raw project data for debugging/exploration
+                raw_projects = identify_multi_college_projects(st.session_state.filtered_dataframes)
+                
+                if not raw_projects.empty:
+                    multi_college_count = raw_projects['is_multi_college'].sum()
+                    if multi_college_count > 0:
+                        with st.expander("Raw Project Data", expanded=False):
+                            st.markdown(f"### Showing {len(raw_projects)} Projects ({multi_college_count} Multi-College)")
+                            
+                            # College count distribution
+                            col_counts = raw_projects['college_count'].value_counts().sort_index()
+                            count_df = pd.DataFrame({
+                                'College Count': col_counts.index,
+                                'Number of Projects': col_counts.values,
+                                'Percentage': (col_counts.values / len(raw_projects) * 100).round(1)
+                            })
+                            
+                            st.markdown("#### College Count Distribution")
+                            st.dataframe(count_df, use_container_width=True)
+                            
+                            # Multi-college project examples
+                            st.markdown("#### Examples of Multi-College Projects")
+                            multi_examples = raw_projects[raw_projects['is_multi_college']].head(5)
+                            
+                            for _, project in multi_examples.iterrows():
+                                st.markdown(f"**Project: {project['grant_code']} (FY {project['fiscal_year']})**")
+                                st.markdown(f"- **Colleges ({len(project['colleges'])}):** {', '.join(project['colleges'])}")
+                                st.markdown(f"- **PIs:** {', '.join(project['pis'])}")
+                                st.markdown(f"- **Co-PIs ({len(project['co_pis'])}):** {', '.join(project['co_pis'])}")
+                                st.markdown("---")
+                    else:
+                        st.warning("No multi-college projects found in the filtered data.")
+                        
+                        # Show examples of single-college projects
+                        with st.expander("Single-College Project Examples", expanded=False):
+                            st.markdown("#### Examples of Single-College Projects")
+                            single_examples = raw_projects[~raw_projects['is_multi_college']].head(5)
+                            
+                            for _, project in single_examples.iterrows():
+                                st.markdown(f"**Project: {project['grant_code']} (FY {project['fiscal_year']})**")
+                                st.markdown(f"- **College:** {', '.join(project['colleges'])}")
+                                st.markdown(f"- **PIs:** {', '.join(project['pis'])}")
+                                st.markdown(f"- **Co-PIs ({len(project['co_pis'])}):** {', '.join(project['co_pis'])}")
+                                st.markdown("---")
+            
+            # Create comprehensive dashboard
+            fig = create_multi_college_dashboard(yearly_stats, comparison_data)
+            st.pyplot(fig)
+            
+            # Allow dashboard export
+            if st.button("Export Dashboard", key="export_multi_college_dashboard"):
+                output_dir = "output"
+                ensure_directory_exists(output_dir)
+                output_path = os.path.join(output_dir, "multi_college_dashboard.png")
+                
+                with st.spinner("Exporting dashboard..."):
+                    save_figure(fig, output_path)
+                    st.success(f"Dashboard exported to {output_path}")
+                    
+                    # Provide download link
+                    with open(output_path, "rb") as file:
+                        st.download_button(
+                            label="Download Dashboard",
+                            data=file,
+                            file_name="multi_college_dashboard.png",
+                            mime="image/png",
+                            key="download_multi_college_dashboard"
+                        )
+        
+        # Yearly Trends tab
+        with analysis_tabs[1]:
+            st.markdown("### Multi-College Projects Trends")
+            
+            # Create trend chart
+            fig = create_multi_college_trend_chart(yearly_stats)
+            st.pyplot(fig)
+            
+            # Display data table with yearly stats
+            if not yearly_stats.empty:
+                with st.expander("View Yearly Data", expanded=False):
+                    # Format the DataFrame for display
+                    display_df = yearly_stats.copy()
+                    
+                    # Format percentages
+                    display_df['multi_college_percentage'] = display_df['multi_college_percentage'].map('{:.1f}%'.format)
+                    
+                    # Rename columns for better readability
+                    display_df = display_df.rename(columns={
+                        'fiscal_year': 'Fiscal Year',
+                        'total_projects': 'Total Projects',
+                        'multi_college_projects': 'Multi-College Projects',
+                        'single_college_projects': 'Single-College Projects',
+                        'multi_college_percentage': 'Multi-College %',
+                        'avg_colleges_per_multi_project': 'Avg. Colleges per Multi-College Project'
+                    })
+                    
+                    # Select columns to display
+                    columns_to_display = ['Fiscal Year', 'Total Projects', 'Multi-College Projects', 
+                                         'Single-College Projects', 'Multi-College %', 
+                                         'Avg. Colleges per Multi-College Project']
+                    
+                    # Display the table
+                    st.dataframe(display_df[columns_to_display])
+        
+        # College Comparisons tab
+        with analysis_tabs[2]:
+            st.markdown("### College Collaboration Analysis")
+            
+            # Controls for the number of colleges to display
+            top_n = st.slider("Number of top colleges to show", 
+                             min_value=5, max_value=20, value=10, 
+                             key="multi_college_top_n")
+            
+            # Create college collaboration chart
+            fig = create_college_collaboration_chart(college_metrics, top_n)
+            st.pyplot(fig)
+            
+            # Display college metrics table
+            if not college_metrics.empty:
+                with st.expander("View College Metrics", expanded=False):
+                    # Format the DataFrame for display
+                    display_df = college_metrics.copy()
+                    
+                    # Format percentages
+                    display_df['multi_college_percentage'] = display_df['multi_college_percentage'].map('{:.1f}%'.format)
+                    
+                    # Rename columns for better readability
+                    display_df = display_df.rename(columns={
+                        'college': 'College',
+                        'total_projects': 'Total Projects',
+                        'multi_college_projects': 'Multi-College Projects',
+                        'multi_college_percentage': 'Multi-College %',
+                        'collaboration_partner_count': 'Number of Partner Colleges',
+                        'collaboration_partners': 'Partner Colleges',
+                        'pi_count': 'PI Count',
+                        'co_pi_count': 'Co-PI Count'
+                    })
+                    
+                    # Select columns to display
+                    columns_to_display = ['College', 'Total Projects', 'Multi-College Projects', 
+                                         'Multi-College %', 'Number of Partner Colleges', 
+                                         'Partner Colleges']
+                    
+                    # Display the table
+                    st.dataframe(display_df[columns_to_display])
+        
+        # Detailed Projects tab
+        with analysis_tabs[3]:
+            st.markdown("### Detailed Multi-College Projects")
+            
+            # Year selection
+            years = sorted(yearly_stats['fiscal_year'].unique()) if not yearly_stats.empty else []
+            if years:
+                selected_year = st.selectbox(
+                    "Select Fiscal Year",
+                    options=years,
+                    index=len(years)-1,  # Default to the most recent year
+                    key="multi_college_year_select"
+                )
+                
+                # Get multi-college projects for the selected year
+                multi_college_projects = get_multi_college_projects_by_year(
+                    st.session_state.filtered_dataframes, selected_year
+                )
+                
+                # Display projects
+                if not multi_college_projects.empty:
+                    st.markdown(f"#### {len(multi_college_projects)} Multi-College Projects in FY {selected_year}")
+                    
+                    # Use the expandable project list component
+                    from modules.components import create_expandable_project_list
+                    
+                    create_expandable_project_list(
+                        projects=multi_college_projects,
+                        title=f"Multi-College Projects - FY {selected_year}",
+                        show_metrics=True,
+                        unique_key="multi_college_projects_list"
+                    )
+                    
+                    # Advanced data exploration
+                    st.markdown("#### Advanced Data Exploration")
+                    
+                    from modules.components import project_details_view
+                    
+                    project_details_view(
+                        projects=multi_college_projects,
+                        title="Multi-College Projects Data Explorer",
+                        unique_key="multi_college_projects_explorer"
+                    )
+                else:
+                    st.info(f"No multi-college projects found for fiscal year {selected_year}")
+            else:
+                st.info("No fiscal year data available")
+        
+        # Funding Analysis tab
+        with analysis_tabs[4]:
+            st.markdown("### Funding Analysis")
+            
+            # Create funding comparison chart
+            fig = create_multi_vs_single_college_comparison_chart(comparison_data)
+            st.pyplot(fig)
+            
+            # Display funding data by year if available
+            if not yearly_stats.empty and 'avg_award_multi_projects' in yearly_stats.columns:
+                # Check if any funding data is available
+                has_funding_data = (
+                    yearly_stats['avg_award_multi_projects'].notna().any() or
+                    yearly_stats['avg_award_single_projects'].notna().any()
+                )
+                
+                if has_funding_data:
+                    st.markdown("#### Funding Trends by Year")
+                    
+                    # Create funding trends chart
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    
+                    # Filter to years with funding data
+                    funding_data = yearly_stats.dropna(subset=['avg_award_multi_projects', 'avg_award_single_projects'], how='all')
+                    
+                    if not funding_data.empty:
+                        years = funding_data['fiscal_year'].astype(str)
+                        
+                        # Plot multi-college funding
+                        if funding_data['avg_award_multi_projects'].notna().any():
+                            ax.plot(years, funding_data['avg_award_multi_projects'], 
+                                   marker='o', label='Multi-College Projects', 
+                                   color='#1f77b4', linewidth=2)
+                        
+                        # Plot single-college funding
+                        if funding_data['avg_award_single_projects'].notna().any():
+                            ax.plot(years, funding_data['avg_award_single_projects'], 
+                                   marker='s', label='Single-College Projects', 
+                                   color='#ff7f0e', linewidth=2)
+                        
+                        # Set labels and title
+                        ax.set_xlabel('Fiscal Year', fontsize=12)
+                        ax.set_ylabel('Average Award Amount ($)', fontsize=12)
+                        ax.set_title('Average Award Amount by Project Type', fontsize=14, fontweight='bold')
+                        
+                        # Format y-axis as currency
+                        ax.yaxis.set_major_formatter('${x:,.0f}')
+                        
+                        # Add grid and legend
+                        ax.grid(axis='y', linestyle='--', alpha=0.3)
+                        ax.legend()
+                        
+                        # Rotate x-axis labels
+                        plt.xticks(rotation=45)
+                        
+                        # Adjust layout
+                        plt.tight_layout()
+                        
+                        # Display the chart
+                        st.pyplot(fig)
+                        
+                        # Display data table
+                        with st.expander("View Funding Data", expanded=False):
+                            # Format the DataFrame for display
+                            display_df = funding_data.copy()
+                            
+                            # Format currency values
+                            for col in ['avg_award_all_projects', 'avg_award_multi_projects', 'avg_award_single_projects']:
+                                if col in display_df.columns:
+                                    display_df[col] = display_df[col].apply(
+                                        lambda x: f"${x:,.2f}" if pd.notnull(x) else "N/A"
+                                    )
+                            
+                            # Rename columns for better readability
+                            display_df = display_df.rename(columns={
+                                'fiscal_year': 'Fiscal Year',
+                                'avg_award_all_projects': 'Avg. Award (All Projects)',
+                                'avg_award_multi_projects': 'Avg. Award (Multi-College)',
+                                'avg_award_single_projects': 'Avg. Award (Single-College)'
+                            })
+                            
+                            # Select columns to display
+                            columns_to_display = ['Fiscal Year', 'Avg. Award (All Projects)', 
+                                                'Avg. Award (Multi-College)', 'Avg. Award (Single-College)']
+                            
+                            # Display the table
+                            st.dataframe(display_df[columns_to_display])
+                    else:
+                        st.info("No funding data available by year")
+                else:
+                    st.info("No funding data available")
+            else:
+                st.info("No funding data available")
+    
+    # Export Data tab
+    with tab8:
         st.markdown(f'<h2 class="sub-header">Export Data</h2>', unsafe_allow_html=True)
         
         # Create output directory
