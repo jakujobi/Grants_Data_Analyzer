@@ -946,7 +946,7 @@ if st.session_state.dataframes:
                             
                             for _, project in multi_examples.iterrows():
                                 st.markdown(f"**Project: {project['grant_code']} (FY {project['fiscal_year']})**")
-                                st.markdown(f"- **Colleges ({len(project['colleges'])}):** {', '.join(project['colleges'])}")
+                                st.markdown(f"- **Colleges ({len(project['college_units'])}):** {', '.join(project['college_units'])}")
                                 st.markdown(f"- **PIs:** {', '.join(project['pis'])}")
                                 st.markdown(f"- **Co-PIs ({len(project['co_pis'])}):** {', '.join(project['co_pis'])}")
                                 st.markdown("---")
@@ -960,7 +960,7 @@ if st.session_state.dataframes:
                             
                             for _, project in single_examples.iterrows():
                                 st.markdown(f"**Project: {project['grant_code']} (FY {project['fiscal_year']})**")
-                                st.markdown(f"- **College:** {', '.join(project['colleges'])}")
+                                st.markdown(f"- **College:** {', '.join(project['college_units'])}")
                                 st.markdown(f"- **PIs:** {', '.join(project['pis'])}")
                                 st.markdown(f"- **Co-PIs ({len(project['co_pis'])}):** {', '.join(project['co_pis'])}")
                                 st.markdown("---")

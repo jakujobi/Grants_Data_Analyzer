@@ -694,7 +694,7 @@ def identify_multi_college_projects(dataframes: Dict[str, pd.DataFrame]) -> pd.D
             'fiscal_year': fiscal_year,
             'pis': pi_names.tolist(),
             'co_pis': co_pis,
-            'colleges': list(colleges),
+            'college_units': list(colleges),
             'college_count': college_count,
             'is_multi_college': is_multi_college,
             'award_amount': project_group['award_amount'].sum() if 'award_amount' in project_group.columns else None
@@ -721,7 +721,7 @@ def identify_multi_college_projects(dataframes: Dict[str, pd.DataFrame]) -> pd.D
                 print(f"  Grant: {project['grant_code']}, Year: {project['fiscal_year']}")
                 print(f"  PIs: {project['pis']}")
                 print(f"  Co-PIs: {project['co_pis']}")
-                print(f"  Colleges: {project['colleges']}")
+                print(f"  Colleges: {project['college_units']}")
                 print()
     else:
         print("No project data found")
@@ -820,7 +820,7 @@ def get_college_collaboration_metrics(dataframes: Dict[str, pd.DataFrame]) -> pd
     
     # Analyze each project
     for _, project in project_data.iterrows():
-        colleges = project['colleges']
+        colleges = project['college_units']
         
         # Skip if no college information
         if not colleges:
