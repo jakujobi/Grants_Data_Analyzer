@@ -862,3 +862,461 @@ def create_multi_college_dashboard(yearly_stats: pd.DataFrame, comparison_data: 
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     
     return fig 
+
+# College Collaboration Analysis visualizations
+def create_network_graph(adj_matrix: pd.DataFrame, metrics: Dict[str, Any], top_n: int = None) -> plt.Figure:
+    """
+    Create a network graph visualization for college collaborations.
+    
+    Args:
+        adj_matrix: Adjacency matrix showing collaborations between colleges
+        metrics: Dictionary with additional network metrics
+        top_n: Optional number of top colleges to include
+        
+    Returns:
+        Matplotlib figure with the network graph
+    """
+    import networkx as nx
+    
+    if adj_matrix.empty or not metrics:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.text(0.5, 0.5, "No collaboration data available", 
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax.transAxes, fontsize=14)
+        return fig
+    
+    # Create a graph from the adjacency matrix
+    G = nx.from_pandas_adjacency(adj_matrix)
+    
+    # Filter to include only top_n colleges if specified
+    if top_n is not None and top_n < len(adj_matrix):
+        # Get colleges sorted by degree centrality
+        centrality = metrics['degree_centrality']
+        top_colleges = sorted(centrality.keys(), key=lambda x: centrality[x], reverse=True)[:top_n]
+        
+        # Create a subgraph with only the top colleges
+        G = G.subgraph(top_colleges)
+    
+    # Set up the figure and axis
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Get positions for the nodes using a spring layout
+    pos = nx.spring_layout(G, k=0.3, iterations=50, seed=42)
+    
+    # Get node sizes based on degree centrality
+    centrality = metrics['degree_centrality']
+    node_sizes = [centrality.get(node, 1) * 100 for node in G.nodes()]
+    
+    # Get edge weights
+    edge_weights = [G[u][v]['weight'] for u, v in G.edges()]
+    
+    # Normalize edge weights for visualization
+    max_edge_weight = max(edge_weights) if edge_weights else 1
+    norm_edge_weights = [w / max_edge_weight * 5 for w in edge_weights]
+    
+    # Draw the graph elements
+    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color='skyblue', 
+                          alpha=0.8, edgecolors='black', ax=ax)
+    
+    nx.draw_networkx_edges(G, pos, width=norm_edge_weights, alpha=0.5, 
+                          edge_color='gray', ax=ax)
+    
+    nx.draw_networkx_labels(G, pos, font_size=10, font_family='sans-serif', ax=ax)
+    
+    # Add a title
+    ax.set_title('College Collaboration Network', fontsize=16, fontweight='bold')
+    
+    # Remove axis
+    ax.axis('off')
+    
+    # Add legend for node size
+    handles = [plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='skyblue', 
+                         markersize=np.sqrt(s/30), markeredgecolor='black', alpha=0.8) 
+              for s in [100, 500, 1000]]
+    
+    centrality_values = sorted(centrality.values(), reverse=True)
+    legend_labels = [f"High Centrality ({centrality_values[0]})", 
+                    f"Medium Centrality ({centrality_values[len(centrality_values)//2]})", 
+                    f"Low Centrality ({centrality_values[-1]})"]
+    
+    ax.legend(handles, legend_labels, loc='lower right', title='Collaboration Centrality')
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig
+
+def create_heatmap(adj_matrix: pd.DataFrame, top_n: int = None) -> plt.Figure:
+    """
+    Create a heatmap visualization for the college collaboration matrix.
+    
+    Args:
+        adj_matrix: Adjacency matrix showing collaborations between colleges
+        top_n: Optional number of top colleges to include
+        
+    Returns:
+        Matplotlib figure with the heatmap
+    """
+    if adj_matrix.empty:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.text(0.5, 0.5, "No collaboration data available", 
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax.transAxes, fontsize=14)
+        return fig
+    
+    # Filter to include only top_n colleges if specified
+    if top_n is not None and top_n < len(adj_matrix):
+        # Sort colleges by sum of collaborations
+        college_sums = adj_matrix.sum(axis=1)
+        top_colleges = college_sums.sort_values(ascending=False).index[:top_n]
+        
+        # Filter the matrix to include only top colleges
+        filtered_matrix = adj_matrix.loc[top_colleges, top_colleges]
+    else:
+        filtered_matrix = adj_matrix
+    
+    # Create the figure and axis
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Create the heatmap
+    cmap = plt.cm.Blues
+    im = ax.imshow(filtered_matrix, cmap=cmap)
+    
+    # Add colorbar
+    cbar = ax.figure.colorbar(im, ax=ax)
+    cbar.ax.set_ylabel("Number of Collaborations", rotation=-90, va="bottom")
+    
+    # Set ticks and labels
+    ax.set_xticks(np.arange(len(filtered_matrix.columns)))
+    ax.set_yticks(np.arange(len(filtered_matrix.index)))
+    ax.set_xticklabels(filtered_matrix.columns)
+    ax.set_yticklabels(filtered_matrix.index)
+    
+    # Rotate the x-axis labels
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+    
+    # Add labels and annotations
+    for i in range(len(filtered_matrix.index)):
+        for j in range(len(filtered_matrix.columns)):
+            if filtered_matrix.iloc[i, j] > 0:
+                ax.text(j, i, filtered_matrix.iloc[i, j],
+                       ha="center", va="center", 
+                       color="white" if filtered_matrix.iloc[i, j] > filtered_matrix.max() / 2 else "black")
+    
+    # Add title
+    ax.set_title("College Collaboration Heatmap", fontsize=16, fontweight='bold')
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig
+
+def create_role_distribution_chart(role_data: pd.DataFrame, top_n: int = 10) -> plt.Figure:
+    """
+    Create a chart showing the distribution of PI vs. Co-PI roles for colleges.
+    
+    Args:
+        role_data: DataFrame with role distribution metrics for each college
+        top_n: Number of top colleges to include
+        
+    Returns:
+        Matplotlib figure with the role distribution chart
+    """
+    if role_data.empty:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.text(0.5, 0.5, "No role distribution data available", 
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax.transAxes, fontsize=14)
+        return fig
+    
+    # Get the top N colleges by total count
+    top_colleges = role_data.sort_values('total_count', ascending=False).head(top_n)
+    
+    # Set up the figure and axes
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Set the width of the bars
+    bar_width = 0.35
+    
+    # Set the positions of the bars on the x-axis
+    indices = np.arange(len(top_colleges))
+    
+    # Create the bars
+    ax.bar(indices - bar_width/2, top_colleges['pi_count'], bar_width, 
+          label='PI Role', color='#1f77b4', alpha=0.8)
+    
+    ax.bar(indices + bar_width/2, top_colleges['co_pi_count'], bar_width,
+          label='Co-PI Role', color='#ff7f0e', alpha=0.8)
+    
+    # Add labels and title
+    ax.set_xlabel('College', fontsize=12)
+    ax.set_ylabel('Number of Roles', fontsize=12)
+    ax.set_title('PI vs. Co-PI Role Distribution by College', fontsize=16, fontweight='bold')
+    
+    # Set the x-tick labels
+    ax.set_xticks(indices)
+    ax.set_xticklabels(top_colleges['college'], rotation=45, ha='right')
+    
+    # Add a legend
+    ax.legend()
+    
+    # Add data labels
+    for i, v in enumerate(top_colleges['pi_count']):
+        ax.text(i - bar_width/2, v + 0.1, str(int(v)), 
+                color='#1f77b4', fontweight='bold', ha='center')
+    
+    for i, v in enumerate(top_colleges['co_pi_count']):
+        ax.text(i + bar_width/2, v + 0.1, str(int(v)), 
+                color='#ff7f0e', fontweight='bold', ha='center')
+    
+    # Add grid lines
+    ax.grid(axis='y', linestyle='--', alpha=0.3)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig
+
+def create_collaboration_diversity_chart(diversity_data: pd.DataFrame, top_n: int = 15) -> plt.Figure:
+    """
+    Create a chart showing collaboration diversity metrics for colleges.
+    
+    Args:
+        diversity_data: DataFrame with collaboration diversity metrics
+        top_n: Number of top colleges to include
+        
+    Returns:
+        Matplotlib figure with the collaboration diversity chart
+    """
+    if diversity_data.empty:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.text(0.5, 0.5, "No collaboration diversity data available", 
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax.transAxes, fontsize=14)
+        return fig
+    
+    # Get the top N colleges by unique collaborator count
+    top_colleges = diversity_data.sort_values('unique_collaborator_count', ascending=False).head(top_n)
+    
+    # Set up the figure and axes
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
+    
+    # Create horizontal bar chart for unique collaborator count
+    y_pos = np.arange(len(top_colleges))
+    ax1.barh(y_pos, top_colleges['unique_collaborator_count'], color='skyblue')
+    ax1.set_yticks(y_pos)
+    ax1.set_yticklabels(top_colleges['college'])
+    ax1.invert_yaxis()  # Highest values at the top
+    ax1.set_xlabel('Number of Unique Collaborating Colleges')
+    ax1.set_title('Collaboration Breadth')
+    
+    # Add grid lines
+    ax1.grid(axis='x', linestyle='--', alpha=0.3)
+    
+    # Create horizontal bar chart for collaboration intensity
+    ax2.barh(y_pos, top_colleges['collaboration_intensity'], color='lightgreen')
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels([])  # Hide labels as they're the same as first chart
+    ax2.invert_yaxis()  # Keep the same order as the first chart
+    ax2.set_xlabel('Collaboration Intensity\n(Avg. Collaborations per Partner)')
+    ax2.set_title('Collaboration Intensity')
+    
+    # Add grid lines
+    ax2.grid(axis='x', linestyle='--', alpha=0.3)
+    
+    # Add data labels to first chart
+    for i, v in enumerate(top_colleges['unique_collaborator_count']):
+        ax1.text(v + 0.1, i, str(int(v)), va='center')
+    
+    # Add data labels to second chart
+    for i, v in enumerate(top_colleges['collaboration_intensity']):
+        ax2.text(v + 0.1, i, f"{v:.1f}", va='center')
+    
+    # Add an overall title
+    fig.suptitle('College Collaboration Diversity Analysis', fontsize=16, fontweight='bold')
+    
+    # Adjust layout
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for the overall title
+    
+    return fig
+
+def create_college_collaboration_dashboard(adj_matrix: pd.DataFrame, 
+                                         metrics: Dict[str, Any], 
+                                         role_data: pd.DataFrame,
+                                         diversity_data: pd.DataFrame) -> plt.Figure:
+    """
+    Create a comprehensive dashboard for college collaboration analysis.
+    
+    Args:
+        adj_matrix: Adjacency matrix showing collaborations between colleges
+        metrics: Dictionary with additional network metrics
+        role_data: DataFrame with role distribution metrics
+        diversity_data: DataFrame with collaboration diversity metrics
+        
+    Returns:
+        Matplotlib figure with the comprehensive dashboard
+    """
+    if adj_matrix.empty or not metrics or role_data.empty or diversity_data.empty:
+        fig, ax = plt.subplots(figsize=(12, 10))
+        ax.text(0.5, 0.5, "Insufficient data for collaboration dashboard", 
+                horizontalalignment='center', verticalalignment='center',
+                transform=ax.transAxes, fontsize=14)
+        return fig
+    
+    # Set up the figure and grid of subplots
+    fig = plt.figure(figsize=(20, 16))
+    
+    # Create a grid layout
+    gs = fig.add_gridspec(3, 3)
+    
+    # Network graph (top left, spanning 2 columns)
+    ax_network = fig.add_subplot(gs[0, :2])
+    
+    # Get the top 10 colleges by centrality
+    centrality = metrics['degree_centrality']
+    top_colleges = sorted(centrality.keys(), key=lambda x: centrality[x], reverse=True)[:10]
+    
+    # Create a subgraph with only the top colleges
+    import networkx as nx
+    G = nx.from_pandas_adjacency(adj_matrix)
+    G = G.subgraph(top_colleges)
+    
+    # Get positions for the nodes
+    pos = nx.spring_layout(G, k=0.3, iterations=50, seed=42)
+    
+    # Get node sizes based on degree centrality
+    node_sizes = [centrality.get(node, 1) * 100 for node in G.nodes()]
+    
+    # Get edge weights
+    edge_weights = [G[u][v]['weight'] for u, v in G.edges()]
+    
+    # Normalize edge weights
+    max_edge_weight = max(edge_weights) if edge_weights else 1
+    norm_edge_weights = [w / max_edge_weight * 5 for w in edge_weights]
+    
+    # Draw the graph elements
+    nx.draw_networkx_nodes(G, pos, node_size=node_sizes, node_color='skyblue', 
+                          alpha=0.8, edgecolors='black', ax=ax_network)
+    
+    nx.draw_networkx_edges(G, pos, width=norm_edge_weights, alpha=0.5, 
+                          edge_color='gray', ax=ax_network)
+    
+    nx.draw_networkx_labels(G, pos, font_size=10, font_family='sans-serif', ax=ax_network)
+    
+    ax_network.set_title('Top 10 College Network', fontsize=14)
+    ax_network.axis('off')
+    
+    # Top collaborations table (top right)
+    ax_table = fig.add_subplot(gs[0, 2])
+    ax_table.axis('tight')
+    ax_table.axis('off')
+    
+    # Get top collaborating pairs
+    pairs = []
+    for i, college1 in enumerate(adj_matrix.index):
+        for college2 in adj_matrix.columns[i+1:]:
+            if adj_matrix.loc[college1, college2] > 0:
+                pairs.append((college1, college2, adj_matrix.loc[college1, college2]))
+    
+    # Sort pairs by collaboration count
+    pairs.sort(key=lambda x: x[2], reverse=True)
+    
+    # Create table data
+    table_data = [["College 1", "College 2", "Collaborations"]]
+    for college1, college2, count in pairs[:8]:  # Show top 8 pairs
+        table_data.append([college1, college2, count])
+    
+    # Create the table
+    table = ax_table.table(cellText=table_data, loc='center', cellLoc='center')
+    
+    # Style the table
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1, 1.5)
+    
+    # Set header style
+    for i in range(len(table_data[0])):
+        table[(0, i)].set_facecolor('#4CAF50')
+        table[(0, i)].set_text_props(color='white', fontweight='bold')
+    
+    ax_table.set_title('Top College Collaborations', fontsize=14)
+    
+    # Role distribution chart (middle row, span all columns)
+    ax_roles = fig.add_subplot(gs[1, :])
+    
+    # Get top colleges by total count for role distribution
+    top_role_data = role_data.sort_values('total_count', ascending=False).head(8)
+    
+    # Set the positions of the bars
+    indices = np.arange(len(top_role_data))
+    bar_width = 0.35
+    
+    # Create the bars
+    ax_roles.bar(indices - bar_width/2, top_role_data['pi_count'], bar_width, 
+                label='PI Role', color='#1f77b4', alpha=0.8)
+    
+    ax_roles.bar(indices + bar_width/2, top_role_data['co_pi_count'], bar_width,
+                label='Co-PI Role', color='#ff7f0e', alpha=0.8)
+    
+    # Set labels and title
+    ax_roles.set_xlabel('College', fontsize=12)
+    ax_roles.set_ylabel('Number of Roles', fontsize=12)
+    ax_roles.set_title('PI vs. Co-PI Role Distribution', fontsize=14)
+    
+    # Set x-tick labels
+    ax_roles.set_xticks(indices)
+    ax_roles.set_xticklabels(top_role_data['college'], rotation=45, ha='right')
+    
+    # Add a legend and grid
+    ax_roles.legend()
+    ax_roles.grid(axis='y', linestyle='--', alpha=0.3)
+    
+    # Collaboration diversity - unique partners (bottom left)
+    ax_diversity = fig.add_subplot(gs[2, 0])
+    
+    # Get top colleges by unique collaborator count
+    top_diversity_data = diversity_data.sort_values('unique_collaborator_count', ascending=False).head(8)
+    
+    # Create horizontal bar chart
+    y_pos = np.arange(len(top_diversity_data))
+    ax_diversity.barh(y_pos, top_diversity_data['unique_collaborator_count'], color='skyblue')
+    ax_diversity.set_yticks(y_pos)
+    ax_diversity.set_yticklabels(top_diversity_data['college'])
+    ax_diversity.invert_yaxis()
+    ax_diversity.set_xlabel('Number of Unique Partners')
+    ax_diversity.set_title('Collaboration Breadth', fontsize=14)
+    ax_diversity.grid(axis='x', linestyle='--', alpha=0.3)
+    
+    # Collaboration intensity (bottom middle)
+    ax_intensity = fig.add_subplot(gs[2, 1])
+    
+    ax_intensity.barh(y_pos, top_diversity_data['collaboration_intensity'], color='lightgreen')
+    ax_intensity.set_yticks(y_pos)
+    ax_intensity.set_yticklabels([])  # Hide labels as they're the same as diversity chart
+    ax_intensity.invert_yaxis()
+    ax_intensity.set_xlabel('Avg. Collaborations per Partner')
+    ax_intensity.set_title('Collaboration Intensity', fontsize=14)
+    ax_intensity.grid(axis='x', linestyle='--', alpha=0.3)
+    
+    # Diversity percentage (bottom right)
+    ax_percentage = fig.add_subplot(gs[2, 2])
+    
+    ax_percentage.barh(y_pos, top_diversity_data['diversity_percentage'], color='salmon')
+    ax_percentage.set_yticks(y_pos)
+    ax_percentage.set_yticklabels([])  # Hide labels as they're the same as diversity chart
+    ax_percentage.invert_yaxis()
+    ax_percentage.set_xlabel('Diversity Percentage (%)')
+    ax_percentage.set_title('Collaboration Coverage', fontsize=14)
+    ax_percentage.grid(axis='x', linestyle='--', alpha=0.3)
+    
+    # Add percentage signs to the labels
+    for i, v in enumerate(top_diversity_data['diversity_percentage']):
+        ax_percentage.text(v + 1, i, f"{v:.1f}%", va='center')
+    
+    # Add an overall title
+    fig.suptitle('College Collaboration Analysis Dashboard', fontsize=20, fontweight='bold')
+    
+    # Adjust layout
+    plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for the overall title
+    
+    return fig 
