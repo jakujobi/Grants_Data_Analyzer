@@ -965,91 +965,182 @@ def get_multi_college_projects_by_year(dataframes: Dict[str, pd.DataFrame], fisc
     
     return filtered_data
 
-# College Collaboration Analysis functions
-def create_college_collaboration_network(dataframes: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+def analyze_college_collaboration_network(dataframes: Dict[str, pd.DataFrame]) -> Tuple[pd.DataFrame, Dict[str, Dict[str, int]]]:
     """
-    Create a collaboration matrix/network between colleges.
+    Analyze the network of college collaborations and create a pairwise collaboration matrix.
+    
+    This function identifies how frequently different colleges collaborate with each other
+    across projects by constructing a matrix of pairwise relationships.
     
     Args:
         dataframes: Dictionary mapping sheet names to DataFrames
         
     Returns:
         Tuple containing:
-        - Adjacency matrix as DataFrame showing collaborations between colleges
-        - Dictionary with additional network metrics
+        - DataFrame with the collaboration matrix (colleges as both rows and columns)
+        - Dictionary mapping each college pair to the list of their collaborative projects
     """
-    # Get project data with college information
+    # Get project data
     project_data = identify_multi_college_projects(dataframes)
     
     if project_data.empty:
         return pd.DataFrame(), {}
     
-    # Create a list of all colleges
+    # Filter to only multi-college projects
+    multi_college_projects = project_data[project_data['is_multi_college']]
+    
+    if multi_college_projects.empty:
+        return pd.DataFrame(), {}
+    
+    # Get all unique colleges
     all_colleges = set()
-    for _, project in project_data.iterrows():
-        all_colleges.update(project['college_units'])
+    for colleges in multi_college_projects['college_units']:
+        all_colleges.update(colleges)
     
     all_colleges = sorted(list(all_colleges))
     
-    # Initialize adjacency matrix with zeros
-    adj_matrix = pd.DataFrame(0, index=all_colleges, columns=all_colleges)
+    # Initialize collaboration matrix with zeros
+    collaboration_matrix = pd.DataFrame(
+        0, 
+        index=all_colleges, 
+        columns=all_colleges
+    )
     
-    # Create a dictionary to store college-to-PI mappings
-    college_to_pis = {college: set() for college in all_colleges}
-    college_to_co_pis = {college: set() for college in all_colleges}
+    # Initialize project tracking dictionary
+    college_pair_projects = {}
     
-    # Fill the adjacency matrix with collaboration counts
-    for _, project in project_data.iterrows():
+    # Count collaborations between each pair of colleges
+    for _, project in multi_college_projects.iterrows():
         colleges = project['college_units']
         
-        # Only consider multi-college projects
-        if len(colleges) > 1:
-            # Update PI assignments to colleges
-            for college in colleges:
-                # Check for PIs from this college
-                for pi in project['pis']:
-                    college_to_pis[college].add(pi)
+        # Skip if less than 2 colleges (shouldn't happen with multi-college projects)
+        if len(colleges) < 2:
+            continue
+        
+        # Iterate through each pair of colleges
+        for i, college1 in enumerate(colleges):
+            for college2 in colleges[i+1:]:
+                # Update the matrix (symmetric)
+                collaboration_matrix.at[college1, college2] += 1
+                collaboration_matrix.at[college2, college1] += 1
                 
-                # Check for Co-PIs from this college
-                for co_pi in project['co_pis']:
-                    college_to_co_pis[college].add(co_pi)
-            
-            # For each pair of colleges, increment collaboration count
-            for i, college1 in enumerate(colleges):
-                for college2 in colleges[i+1:]:
-                    adj_matrix.loc[college1, college2] += 1
-                    adj_matrix.loc[college2, college1] += 1
+                # Track the projects for this college pair
+                pair_key = tuple(sorted([college1, college2]))
+                if pair_key not in college_pair_projects:
+                    college_pair_projects[pair_key] = []
+                
+                college_pair_projects[pair_key].append({
+                    'grant_code': project['grant_code'],
+                    'fiscal_year': project['fiscal_year'],
+                    'pis': project['pis'],
+                    'co_pis': project['co_pis'],
+                    'college_units': project['college_units'],
+                    'award_amount': project['award_amount']
+                })
     
-    # Calculate network metrics
-    network_metrics = {}
-    
-    # Degree centrality (total number of collaborations)
-    degree_centrality = adj_matrix.sum(axis=1)
-    network_metrics['degree_centrality'] = degree_centrality.to_dict()
-    
-    # Number of unique collaborators
-    unique_collaborators = {}
-    for college in all_colleges:
-        # Count non-zero entries (excluding self)
-        unique_collaborators[college] = (adj_matrix.loc[college] > 0).sum()
-    
-    network_metrics['unique_collaborators'] = unique_collaborators
-    
-    # College roles (PI vs Co-PI counts)
-    pi_counts = {college: len(pis) for college, pis in college_to_pis.items()}
-    co_pi_counts = {college: len(co_pis) for college, co_pis in college_to_co_pis.items()}
-    
-    network_metrics['pi_counts'] = pi_counts
-    network_metrics['co_pi_counts'] = co_pi_counts
-    
-    # Store a list of all colleges for reference
-    network_metrics['all_colleges'] = all_colleges
-    
-    return adj_matrix, network_metrics
+    return collaboration_matrix, college_pair_projects
 
-def get_college_role_distribution(dataframes: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+def compute_college_centrality_metrics(collaboration_matrix: pd.DataFrame) -> pd.DataFrame:
     """
-    Analyze the distribution of roles (PI vs. Co-PI) across collaborations for each college.
+    Compute network centrality metrics for each college based on collaboration patterns.
+    
+    This function calculates various network centrality metrics to identify colleges that
+    act as central hubs in the collaboration network.
+    
+    Args:
+        collaboration_matrix: DataFrame containing the pairwise college collaboration counts
+        
+    Returns:
+        DataFrame with centrality metrics for each college
+    """
+    try:
+        import networkx as nx
+    except ImportError:
+        # Provide a fallback if networkx isn't available
+        print("NetworkX library not found. Using simplified centrality metrics.")
+        return compute_simplified_centrality_metrics(collaboration_matrix)
+    
+    # Create a graph from the collaboration matrix
+    G = nx.from_pandas_adjacency(collaboration_matrix)
+    
+    # Calculate centrality metrics
+    degree_centrality = nx.degree_centrality(G)
+    betweenness_centrality = nx.betweenness_centrality(G)
+    eigenvector_centrality = nx.eigenvector_centrality(G, max_iter=1000)
+    
+    # Create a DataFrame with the results
+    centrality_df = pd.DataFrame({
+        'college': list(degree_centrality.keys()),
+        'degree_centrality': list(degree_centrality.values()),
+        'betweenness_centrality': list(betweenness_centrality.values()),
+        'eigenvector_centrality': list(eigenvector_centrality.values())
+    })
+    
+    # Add total collaborations (sum of collaborative projects)
+    centrality_df['total_collaborations'] = centrality_df['college'].apply(
+        lambda college: collaboration_matrix.loc[college].sum()
+    )
+    
+    # Add unique collaborators (number of colleges with at least one collaboration)
+    centrality_df['unique_collaborators'] = centrality_df['college'].apply(
+        lambda college: (collaboration_matrix.loc[college] > 0).sum()
+    )
+    
+    # Sort by degree centrality in descending order
+    centrality_df = centrality_df.sort_values('degree_centrality', ascending=False)
+    
+    return centrality_df
+
+def compute_simplified_centrality_metrics(collaboration_matrix: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute simplified centrality metrics when NetworkX is not available.
+    
+    This is a fallback function that computes basic centrality measures without
+    requiring the NetworkX library.
+    
+    Args:
+        collaboration_matrix: DataFrame containing the pairwise college collaboration counts
+        
+    Returns:
+        DataFrame with simplified centrality metrics for each college
+    """
+    # Get all colleges
+    colleges = collaboration_matrix.index.tolist()
+    
+    # Calculate simplified metrics
+    metrics = []
+    for college in colleges:
+        # Total collaborations (sum of row)
+        total_collaborations = collaboration_matrix.loc[college].sum()
+        
+        # Unique collaborators (number of non-zero entries)
+        unique_collaborators = (collaboration_matrix.loc[college] > 0).sum()
+        
+        # Simplified degree centrality (normalized by max possible connections)
+        simplified_degree = unique_collaborators / (len(colleges) - 1) if len(colleges) > 1 else 0
+        
+        metrics.append({
+            'college': college,
+            'total_collaborations': total_collaborations,
+            'unique_collaborators': unique_collaborators,
+            'degree_centrality': simplified_degree,
+            # Placeholder values for metrics we can't compute without networkx
+            'betweenness_centrality': 0,
+            'eigenvector_centrality': 0
+        })
+    
+    # Convert to DataFrame and sort
+    centrality_df = pd.DataFrame(metrics)
+    centrality_df = centrality_df.sort_values('total_collaborations', ascending=False)
+    
+    return centrality_df
+
+def analyze_college_role_distribution(dataframes: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """
+    Analyze the distribution of PI vs. Co-PI roles for each college across projects.
+    
+    This function determines whether colleges predominantly lead projects (PI role) or
+    contribute as partners (Co-PI role).
     
     Args:
         dataframes: Dictionary mapping sheet names to DataFrames
@@ -1057,120 +1148,109 @@ def get_college_role_distribution(dataframes: Dict[str, pd.DataFrame]) -> pd.Dat
     Returns:
         DataFrame with role distribution metrics for each college
     """
-    # Create the network first to get college-role mappings
-    _, network_metrics = create_college_collaboration_network(dataframes)
-    
-    if not network_metrics:
+    if 'AwardsRawData' not in dataframes:
+        print("Warning: AwardsRawData sheet not found")
         return pd.DataFrame()
     
-    # Extract role counts
-    pi_counts = network_metrics['pi_counts']
-    co_pi_counts = network_metrics['co_pi_counts']
-    all_colleges = network_metrics['all_colleges']
+    df = dataframes['AwardsRawData']
     
-    # Create role distribution DataFrame
+    required_cols = ['collegeunit', 'pi', 'co_pi_list', 'grant_code', 'fiscal_year']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        print(f"Warning: Required columns missing: {missing_cols}")
+        print(f"Available columns: {list(df.columns)}")
+        return pd.DataFrame()
+    
+    # Create a person-to-college mapping
+    person_to_college = {}
+    for _, row in df.iterrows():
+        if not pd.isna(row['collegeunit']) and not pd.isna(row['pi']):
+            person_to_college[row['pi']] = row['collegeunit']
+    
+    # Check if AwardsCoPIsRawData is available for more accurate Co-PI mapping
+    if 'AwardsCoPIsRawData' in dataframes:
+        copi_df = dataframes['AwardsCoPIsRawData']
+        if 'co_pi' in copi_df.columns and 'collegeunit' in copi_df.columns:
+            for _, row in copi_df.iterrows():
+                if not pd.isna(row['co_pi']) and not pd.isna(row['collegeunit']):
+                    person_to_college[row['co_pi']] = row['collegeunit']
+    
+    # Initialize role counters for each college
+    college_roles = {}
+    
+    # Track unique projects for each college
+    for _, row in df.iterrows():
+        college = row['collegeunit']
+        if pd.isna(college):
+            continue
+        
+        # Get unique project identifier
+        project_id = (row['grant_code'], row['fiscal_year'])
+        
+        # Initialize if this college hasn't been seen yet
+        if college not in college_roles:
+            college_roles[college] = {
+                'pi_count': 0,  # Number of times college acts as PI
+                'co_pi_count': 0,  # Number of times college acts as Co-PI
+                'pi_projects': set(),  # Unique projects where college is PI
+                'co_pi_projects': set(),  # Unique projects where college is Co-PI
+                'total_projects': set()  # All unique projects
+            }
+        
+        # Add to total projects
+        college_roles[college]['total_projects'].add(project_id)
+        
+        # Check if PI is from this college
+        if not pd.isna(row['pi']):
+            pi_college = person_to_college.get(row['pi'])
+            if pi_college == college:
+                college_roles[college]['pi_count'] += 1
+                college_roles[college]['pi_projects'].add(project_id)
+        
+        # Check if any Co-PIs are from this college
+        if isinstance(row['co_pi_list'], list):
+            for co_pi in row['co_pi_list']:
+                if co_pi and not pd.isna(co_pi):
+                    co_pi_college = person_to_college.get(co_pi)
+                    if co_pi_college == college:
+                        college_roles[college]['co_pi_count'] += 1
+                        college_roles[college]['co_pi_projects'].add(project_id)
+                        break  # Only count once per project
+    
+    # Convert to DataFrame
     role_data = []
-    for college in all_colleges:
-        pi_count = pi_counts.get(college, 0)
-        co_pi_count = co_pi_counts.get(college, 0)
-        total_count = pi_count + co_pi_count
+    for college, roles in college_roles.items():
+        unique_pi_projects = len(roles['pi_projects'])
+        unique_co_pi_projects = len(roles['co_pi_projects'])
+        total_unique_projects = len(roles['total_projects'])
         
         # Calculate percentages
-        pi_percentage = (pi_count / total_count * 100) if total_count > 0 else 0
-        co_pi_percentage = (co_pi_count / total_count * 100) if total_count > 0 else 0
+        pi_percentage = (unique_pi_projects / total_unique_projects * 100) if total_unique_projects > 0 else 0
+        co_pi_percentage = (unique_co_pi_projects / total_unique_projects * 100) if total_unique_projects > 0 else 0
         
-        # Calculate PI-to-Co-PI ratio
-        ratio = pi_count / co_pi_count if co_pi_count > 0 else float('inf')
-        if ratio == float('inf'):
-            ratio_str = "∞ (PI only)"
-        else:
-            ratio_str = f"{ratio:.2f}"
+        # Calculate leadership ratio (PI projects / Co-PI projects)
+        leadership_ratio = (unique_pi_projects / unique_co_pi_projects) if unique_co_pi_projects > 0 else float('inf')
         
         role_data.append({
             'college': college,
-            'pi_count': pi_count,
-            'co_pi_count': co_pi_count,
-            'total_count': total_count,
+            'pi_projects': unique_pi_projects,
+            'co_pi_projects': unique_co_pi_projects,
+            'total_projects': total_unique_projects,
             'pi_percentage': pi_percentage,
             'co_pi_percentage': co_pi_percentage,
-            'pi_to_copi_ratio': ratio,
-            'pi_to_copi_ratio_str': ratio_str,
-            'primary_role': 'PI' if pi_count >= co_pi_count else 'Co-PI'
+            'leadership_ratio': leadership_ratio
         })
     
-    # Convert to DataFrame and sort by total count
-    role_df = pd.DataFrame(role_data).sort_values('total_count', ascending=False)
-    
-    return role_df
-
-def get_pairwise_college_collaborations(dataframes: Dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """
-    Get detailed information about pairwise collaborations between colleges.
-    
-    Args:
-        dataframes: Dictionary mapping sheet names to DataFrames
-        
-    Returns:
-        DataFrame with pairwise collaboration details
-    """
-    # Get the adjacency matrix
-    adj_matrix, _ = create_college_collaboration_network(dataframes)
-    
-    if adj_matrix.empty:
-        return pd.DataFrame()
-    
-    # Convert the adjacency matrix to a long format DataFrame
-    pairs = []
-    for college1 in adj_matrix.index:
-        for college2 in adj_matrix.columns:
-            if college1 != college2 and adj_matrix.loc[college1, college2] > 0:
-                pairs.append({
-                    'college1': college1,
-                    'college2': college2,
-                    'collaboration_count': adj_matrix.loc[college1, college2]
-                })
-    
-    # Create DataFrame and sort by collaboration count
-    pairs_df = pd.DataFrame(pairs).sort_values('collaboration_count', ascending=False)
-    
-    return pairs_df
-
-def get_projects_by_college_pair(dataframes: Dict[str, pd.DataFrame], college1: str, college2: str) -> pd.DataFrame:
-    """
-    Get projects involving a specific pair of colleges.
-    
-    Args:
-        dataframes: Dictionary mapping sheet names to DataFrames
-        college1: First college name
-        college2: Second college name
-        
-    Returns:
-        DataFrame containing projects involving both colleges
-    """
-    # Get project data
-    project_data = identify_multi_college_projects(dataframes)
-    
-    if project_data.empty:
-        return pd.DataFrame()
-    
-    # Filter for projects involving both colleges
-    filtered_projects = []
-    for _, project in project_data.iterrows():
-        colleges = project['college_units']
-        if college1 in colleges and college2 in colleges:
-            filtered_projects.append(project)
-    
-    if not filtered_projects:
-        return pd.DataFrame()
-    
-    # Convert to DataFrame
-    projects_df = pd.DataFrame(filtered_projects)
-    
-    return projects_df
+    # Convert to DataFrame and sort by total projects
+    return pd.DataFrame(role_data).sort_values('total_projects', ascending=False)
 
 def get_college_collaboration_diversity(dataframes: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     """
-    Assess collaboration diversity for each college.
+    Measure how diverse each college's collaborations are.
+    
+    This function calculates diversity metrics to determine whether a college
+    collaborates broadly with many partners or concentrates on a few partners.
     
     Args:
         dataframes: Dictionary mapping sheet names to DataFrames
@@ -1178,38 +1258,105 @@ def get_college_collaboration_diversity(dataframes: Dict[str, pd.DataFrame]) -> 
     Returns:
         DataFrame with collaboration diversity metrics for each college
     """
-    # Get the network metrics
-    _, network_metrics = create_college_collaboration_network(dataframes)
+    # Get college collaboration metrics
+    college_metrics = get_college_collaboration_metrics(dataframes)
     
-    if not network_metrics:
+    if college_metrics.empty:
         return pd.DataFrame()
     
-    # Extract diversity metrics
-    unique_collaborators = network_metrics['unique_collaborators']
-    degree_centrality = network_metrics['degree_centrality']
-    all_colleges = network_metrics['all_colleges']
+    # Calculate collaboration matrix to get pairwise collaboration counts
+    collaboration_matrix, _ = analyze_college_collaboration_network(dataframes)
     
-    # Create diversity metrics DataFrame
-    diversity_data = []
-    for college in all_colleges:
-        collaborator_count = unique_collaborators.get(college, 0)
-        total_collaborations = degree_centrality.get(college, 0)
-        
-        # Calculate collaboration intensity (avg collaborations per partner)
-        intensity = total_collaborations / collaborator_count if collaborator_count > 0 else 0
-        
-        # Calculate diversity percentage (unique partners / total possible partners)
-        diversity_percentage = (collaborator_count / (len(all_colleges) - 1) * 100) if len(all_colleges) > 1 else 0
-        
-        diversity_data.append({
-            'college': college,
-            'unique_collaborator_count': collaborator_count,
-            'total_collaborations': total_collaborations,
-            'collaboration_intensity': intensity,
-            'diversity_percentage': diversity_percentage
-        })
+    # Calculate diversity metrics for each college
+    diversity_metrics = []
     
-    # Convert to DataFrame and sort by unique collaborator count
-    diversity_df = pd.DataFrame(diversity_data).sort_values('unique_collaborator_count', ascending=False)
+    for _, row in college_metrics.iterrows():
+        college = row['college']
+        
+        # Skip if no collaborations
+        if row['collaboration_partner_count'] == 0:
+            continue
+        
+        # Get collaboration counts with each partner
+        if college in collaboration_matrix.index:
+            partner_counts = collaboration_matrix.loc[college]
+            # Filter to only include actual partners (non-zero counts)
+            partner_counts = partner_counts[partner_counts > 0]
+            
+            # Calculate diversity metrics
+            total_collaborations = partner_counts.sum()
+            unique_partners = len(partner_counts)
+            
+            # Calculate Herfindahl-Hirschman Index (HHI) - a measure of concentration
+            # Higher HHI means more concentrated (less diverse) collaborations
+            if total_collaborations > 0:
+                partner_shares = partner_counts / total_collaborations
+                hhi = (partner_shares ** 2).sum()
+            else:
+                hhi = 1.0  # Maximum concentration if no collaborations
+            
+            # Calculate diversity index (1 - HHI)
+            # Higher value means more diverse collaborations
+            diversity_index = 1 - hhi
+            
+            # Calculate effective number of partners (1/HHI)
+            effective_partners = 1 / hhi if hhi > 0 else 0
+            
+            diversity_metrics.append({
+                'college': college,
+                'total_collaborations': total_collaborations,
+                'unique_partners': unique_partners,
+                'collaboration_concentration': hhi,
+                'collaboration_diversity': diversity_index,
+                'effective_partners': effective_partners,
+                'partners': row['collaboration_partners']
+            })
     
-    return diversity_df 
+    # Convert to DataFrame
+    diversity_df = pd.DataFrame(diversity_metrics)
+    
+    # Sort by diversity index in descending order (most diverse first)
+    if not diversity_df.empty:
+        diversity_df = diversity_df.sort_values('collaboration_diversity', ascending=False)
+    
+    return diversity_df
+
+def get_college_collaboration_projects(dataframes: Dict[str, pd.DataFrame], college1: str, college2: str) -> pd.DataFrame:
+    """
+    Get detailed project information for collaborations between two specific colleges.
+    
+    Args:
+        dataframes: Dictionary mapping sheet names to DataFrames
+        college1: First college name
+        college2: Second college name
+        
+    Returns:
+        DataFrame with detailed project information for the college pair
+    """
+    # Get project data
+    project_data = identify_multi_college_projects(dataframes)
+    
+    if project_data.empty:
+        return pd.DataFrame()
+    
+    # Filter to projects involving both colleges
+    filtered_projects = []
+    
+    for _, project in project_data.iterrows():
+        colleges = set(project['college_units'])
+        if college1 in colleges and college2 in colleges:
+            filtered_projects.append({
+                'grant_code': project['grant_code'],
+                'fiscal_year': project['fiscal_year'],
+                'pis': project['pis'],
+                'co_pis': project['co_pis'],
+                'college_units': project['college_units'],
+                'college_count': project['college_count'],
+                'award_amount': project['award_amount']
+            })
+    
+    if not filtered_projects:
+        return pd.DataFrame()
+    
+    # Convert to DataFrame
+    return pd.DataFrame(filtered_projects) 

@@ -39,8 +39,10 @@ from modules.analysis import (
     identify_multi_college_projects, get_multi_college_project_yearly_stats,
     get_college_collaboration_metrics, get_multi_college_vs_single_college_comparison,
     get_multi_college_projects_by_year,
-    create_college_collaboration_network, get_college_role_distribution,
-    get_college_collaboration_diversity, get_pairwise_college_collaborations
+    # New analysis functions for college collaboration network
+    analyze_college_collaboration_network, compute_college_centrality_metrics,
+    analyze_college_role_distribution, get_college_collaboration_diversity,
+    get_college_collaboration_projects
 )
 from modules.visuals import (
     create_bar_chart, create_pie_chart, create_line_chart,
@@ -49,8 +51,10 @@ from modules.visuals import (
     create_multi_college_trend_chart, create_multi_vs_single_college_comparison_chart,
     create_college_collaboration_chart, create_avg_colleges_per_project_chart,
     create_multi_college_dashboard,
-    create_network_graph, create_heatmap, create_role_distribution_chart,
-    create_collaboration_diversity_chart, create_college_collaboration_dashboard
+    # New visualization functions for college collaboration network
+    create_college_network_graph, create_college_heatmap,
+    create_college_role_distribution_chart, create_college_diversity_chart,
+    create_college_collaboration_dashboard, create_interactive_college_matrix_graph
 )
 from modules.utils import export_to_excel, export_to_csv, ensure_directory_exists
 from modules.components import detailed_data_view, project_details_view, create_expandable_project_list
@@ -1187,78 +1191,427 @@ if st.session_state.dataframes:
     with tab7:
         st.markdown(f'<h2 class="sub-header">College Collaboration Network Analysis</h2>', unsafe_allow_html=True)
         
-        # Create the college collaboration network
-        adj_matrix, network_metrics = create_college_collaboration_network(
-            st.session_state.filtered_dataframes
-        )
+        # Description of the analysis
+        with st.expander("About College Collaboration Network Analysis", expanded=False):
+            st.markdown("""
+            ### College Collaboration Network Analysis
+            
+            This feature offers a comprehensive view of how different colleges collaborate on research projects.
+            It provides several metrics and visualizations to help understand institutional collaboration patterns:
+            
+            1. **Network Graph** - Visual representation of college connections
+            2. **Collaboration Matrix** - Heatmap showing the frequency of pairwise collaborations
+            3. **Centrality Metrics** - Identifies key hub colleges in the collaboration network
+            4. **Role Distribution** - Analysis of PI vs. Co-PI roles for each college
+            5. **Collaboration Diversity** - Measures how diversely each college collaborates
+            
+            Use the tabs below to explore different aspects of the college collaboration network.
+            """)
         
-        if adj_matrix.empty or not network_metrics:
-            st.warning("No collaboration data available. Try uploading data or adjusting your filters.")
-        else:
-            # Get role distribution data
-            role_data = get_college_role_distribution(st.session_state.filtered_dataframes)
-            
-            # Get diversity metrics
-            diversity_data = get_college_collaboration_diversity(st.session_state.filtered_dataframes)
-            
-            # Get pairwise collaboration data
-            pairs_data = get_pairwise_college_collaborations(st.session_state.filtered_dataframes)
-            
-            # Network Visualization Options
-            viz_type = st.radio(
-                "Visualization Type",
-                ["Network Graph", "Collaboration Heatmap", "Role Distribution", "Collaboration Diversity", "Comprehensive Dashboard"],
-                horizontal=True,
-                index=0
+        # Compute all the required data for the analysis
+        with st.spinner("Analyzing college collaboration network..."):
+            # Get collaboration matrix and projects
+            collaboration_matrix, college_pair_projects = analyze_college_collaboration_network(
+                st.session_state.filtered_dataframes
             )
             
-            # Display visualizations based on selection
-            if viz_type == "Network Graph":
-                top_n = st.slider("Number of top colleges to include", 5, 30, 15)
-                st.markdown("### College Collaboration Network Graph")
-                st.markdown("This graph shows the strength of collaboration between colleges. Larger nodes indicate colleges with more collaborations.")
+            # Compute centrality metrics
+            centrality_metrics = compute_college_centrality_metrics(collaboration_matrix)
+            
+            # Analyze role distribution
+            role_distribution = analyze_college_role_distribution(
+                st.session_state.filtered_dataframes
+            )
+            
+            # Measure collaboration diversity
+            diversity_metrics = get_college_collaboration_diversity(
+                st.session_state.filtered_dataframes
+            )
+        
+        # Create subtabs for different analyses
+        network_tabs = st.tabs([
+            "Dashboard", "Network Graph", "Collaboration Matrix", 
+            "Centrality Metrics", "Role Distribution", "Collaboration Diversity", 
+            "Explore College Pairs"
+        ])
+        
+        # Dashboard tab - Comprehensive overview
+        with network_tabs[0]:
+            st.markdown("### College Collaboration Network Dashboard")
+            
+            # Create a comprehensive dashboard combining all metrics
+            fig = create_college_collaboration_dashboard(
+                collaboration_matrix, centrality_metrics, role_distribution, diversity_metrics
+            )
+            
+            st.pyplot(fig)
+            
+            # Allow dashboard export
+            if st.button("Export Dashboard", key="export_college_network_dashboard"):
+                output_dir = "output"
+                ensure_directory_exists(output_dir)
+                output_path = os.path.join(output_dir, "college_network_dashboard.png")
                 
-                fig = create_network_graph(adj_matrix, network_metrics, top_n=top_n)
+                with st.spinner("Exporting dashboard..."):
+                    save_figure(fig, output_path)
+                    st.success(f"Dashboard exported to {output_path}")
+                    
+                    # Provide download link
+                    with open(output_path, "rb") as file:
+                        st.download_button(
+                            label="Download Dashboard",
+                            data=file,
+                            file_name="college_network_dashboard.png",
+                            mime="image/png",
+                            key="download_college_network_dashboard"
+                        )
+        
+        # Network Graph tab
+        with network_tabs[1]:
+            st.markdown("### College Collaboration Network Graph")
+            
+            st.markdown("""
+            This network graph visualizes collaborations between colleges. Each node represents a college, 
+            and each edge represents collaboration between two colleges. The size of a node represents 
+            its centrality in the network, and the thickness of an edge represents the frequency of
+            collaboration between the connected colleges.
+            """)
+            
+            # Create the network graph
+            if not collaboration_matrix.empty:
+                fig = create_college_network_graph(collaboration_matrix, centrality_metrics)
                 st.pyplot(fig)
                 
-                # Display top collaborating pairs
-                st.markdown("### Top Collaborating College Pairs")
-                st.dataframe(pairs_data.head(10))
-                
-            elif viz_type == "Collaboration Heatmap":
-                st.markdown("### College Collaboration Heatmap")
-                st.markdown("This heatmap shows the strength of collaboration between pairs of colleges.")
-                
-                fig = create_heatmap(adj_matrix)
+                # Add network statistics
+                if not centrality_metrics.empty:
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric(
+                            "Number of Colleges", 
+                            len(centrality_metrics)
+                        )
+                    
+                    with col2:
+                        # Calculate total number of connections (divided by 2 since each edge is counted twice)
+                        total_connections = int(sum(collaboration_matrix.sum()) / 2)
+                        st.metric(
+                            "Total Connections", 
+                            total_connections
+                        )
+                    
+                    with col3:
+                        # Calculate network density
+                        n = len(centrality_metrics)
+                        max_possible_edges = n * (n - 1) / 2
+                        density = total_connections / max_possible_edges if max_possible_edges > 0 else 0
+                        st.metric(
+                            "Network Density", 
+                            f"{density:.2f}"
+                        )
+            else:
+                st.info("No collaboration data available. Please upload data with multiple colleges collaborating on projects.")
+        
+        # Collaboration Matrix tab
+        with network_tabs[2]:
+            st.markdown("### College Collaboration Matrix")
+            
+            st.markdown("""
+            This heatmap shows the frequency of pairwise collaborations between colleges. 
+            Each cell represents the number of projects involving collaboration between the
+            corresponding colleges.
+            """)
+            
+            # Create the heatmap
+            if not collaboration_matrix.empty:
+                fig = create_college_heatmap(collaboration_matrix)
                 st.pyplot(fig)
                 
-            elif viz_type == "Role Distribution":
-                top_n = st.slider("Number of colleges to show", 5, 20, 10)
-                st.markdown("### PI vs Co-PI Role Distribution by College")
-                st.markdown("This chart shows the distribution of PI and Co-PI roles for each college.")
+                # Display the raw collaboration counts
+                with st.expander("View Collaboration Matrix", expanded=False):
+                    st.dataframe(collaboration_matrix)
+            else:
+                st.info("No collaboration data available. Please upload data with multiple colleges collaborating on projects.")
+        
+        # Centrality Metrics tab
+        with network_tabs[3]:
+            st.markdown("### College Centrality Metrics")
+            
+            st.markdown("""
+            Centrality metrics help identify key players (hub colleges) in the collaboration network:
+            
+            - **Degree Centrality**: Measures how many other colleges a given college collaborates with
+            - **Betweenness Centrality**: Measures how often a college acts as a bridge along the shortest path between two other colleges
+            - **Eigenvector Centrality**: Measures influence in the network based on connections to other influential colleges
+            """)
+            
+            # Display centrality metrics
+            if not centrality_metrics.empty:
+                # Control for number of colleges to display
+                top_n = st.slider(
+                    "Number of top colleges to show", 
+                    min_value=5, 
+                    max_value=min(20, len(centrality_metrics)), 
+                    value=10,
+                    key="centrality_top_n"
+                )
                 
-                fig = create_role_distribution_chart(role_data, top_n=top_n)
+                # Display the top colleges by degree centrality
+                top_central = centrality_metrics.head(top_n)
+                
+                # Create bar chart
+                fig, ax = plt.subplots(figsize=(12, 8))
+                
+                # Define SDSU colors
+                SDSU_BLUE = "#0033A0"
+                
+                # Create bar chart
+                ax.barh(top_central['college'], top_central['degree_centrality'], color=SDSU_BLUE, alpha=0.8)
+                
+                # Set labels and title
+                ax.set_xlabel('Degree Centrality', fontsize=12)
+                ax.set_title('Top Colleges by Centrality', fontsize=14, fontweight='bold')
+                
+                # Add grid
+                ax.grid(axis='x', linestyle='--', alpha=0.3)
+                
                 st.pyplot(fig)
                 
-                # Display role distribution data
-                st.dataframe(role_data)
+                # Display the metrics table
+                with st.expander("View Centrality Metrics", expanded=False):
+                    # Format DataFrame for display
+                    display_df = centrality_metrics.copy()
+                    
+                    # Round centrality values for display
+                    for col in ['degree_centrality', 'betweenness_centrality', 'eigenvector_centrality']:
+                        if col in display_df.columns:
+                            display_df[col] = display_df[col].round(3)
+                    
+                    # Rename columns for better readability
+                    display_df = display_df.rename(columns={
+                        'college': 'College',
+                        'degree_centrality': 'Degree Centrality',
+                        'betweenness_centrality': 'Betweenness Centrality',
+                        'eigenvector_centrality': 'Eigenvector Centrality',
+                        'total_collaborations': 'Total Collaborations',
+                        'unique_collaborators': 'Unique Collaborators'
+                    })
+                    
+                    st.dataframe(display_df)
+            else:
+                st.info("No centrality metrics available. Please upload data with multiple colleges collaborating on projects.")
+        
+        # Role Distribution tab
+        with network_tabs[4]:
+            st.markdown("### College Role Distribution Analysis")
+            
+            st.markdown("""
+            This analysis examines the distribution of PI vs. Co-PI roles for each college across projects.
+            It helps identify whether a college predominantly leads projects (PI role) or contributes as a
+            partner (Co-PI role).
+            """)
+            
+            # Display role distribution
+            if not role_distribution.empty:
+                # Control for number of colleges to display
+                top_n = st.slider(
+                    "Number of top colleges to show", 
+                    min_value=5, 
+                    max_value=min(20, len(role_distribution)), 
+                    value=10,
+                    key="role_top_n"
+                )
                 
-            elif viz_type == "Collaboration Diversity":
-                top_n = st.slider("Number of colleges to show", 5, 20, 10)
-                st.markdown("### College Collaboration Diversity")
-                st.markdown("This chart shows how diverse each college's collaboration network is.")
-                
-                fig = create_collaboration_diversity_chart(diversity_data, top_n=top_n)
+                # Create role distribution chart
+                fig = create_college_role_distribution_chart(role_distribution, top_n)
                 st.pyplot(fig)
                 
-                # Display diversity metrics
-                st.dataframe(diversity_data)
+                # Display the role data table
+                with st.expander("View Role Distribution Data", expanded=False):
+                    # Format DataFrame for display
+                    display_df = role_distribution.copy()
+                    
+                    # Format percentages
+                    display_df['pi_percentage'] = display_df['pi_percentage'].round(1).astype(str) + '%'
+                    display_df['co_pi_percentage'] = display_df['co_pi_percentage'].round(1).astype(str) + '%'
+                    
+                    # Format leadership ratio
+                    display_df['leadership_ratio'] = display_df['leadership_ratio'].apply(
+                        lambda x: f"{x:.2f}" if x != float('inf') else "∞"
+                    )
+                    
+                    # Rename columns for better readability
+                    display_df = display_df.rename(columns={
+                        'college': 'College',
+                        'pi_projects': 'PI Projects',
+                        'co_pi_projects': 'Co-PI Projects',
+                        'total_projects': 'Total Projects',
+                        'pi_percentage': 'PI %',
+                        'co_pi_percentage': 'Co-PI %',
+                        'leadership_ratio': 'Leadership Ratio (PI:Co-PI)'
+                    })
+                    
+                    # Select columns to display
+                    columns_to_display = [
+                        'College', 'Total Projects', 'PI Projects', 'Co-PI Projects',
+                        'PI %', 'Co-PI %', 'Leadership Ratio (PI:Co-PI)'
+                    ]
+                    
+                    st.dataframe(display_df[columns_to_display])
+            else:
+                st.info("No role distribution data available. Please upload data with PI and Co-PI information.")
+        
+        # Collaboration Diversity tab
+        with network_tabs[5]:
+            st.markdown("### College Collaboration Diversity")
+            
+            st.markdown("""
+            This analysis measures how diverse each college's collaborations are. It helps determine
+            whether a college collaborates broadly with many partners or concentrates on a few partners.
+            
+            - **Diversity Index**: Ranges from 0 (concentrated collaborations) to 1 (diverse collaborations)
+            - **Unique Partners**: The raw count of different colleges a college collaborates with
+            - **Effective Partners**: The diversity-weighted number of collaborating colleges
+            """)
+            
+            # Display diversity metrics
+            if not diversity_metrics.empty:
+                # Control for number of colleges to display
+                top_n = st.slider(
+                    "Number of top colleges to show", 
+                    min_value=5, 
+                    max_value=min(20, len(diversity_metrics)), 
+                    value=10,
+                    key="diversity_top_n"
+                )
                 
-            elif viz_type == "Comprehensive Dashboard":
-                st.markdown("### Comprehensive College Collaboration Dashboard")
-                
-                fig = create_college_collaboration_dashboard(adj_matrix, network_metrics, role_data, diversity_data)
+                # Create diversity chart
+                fig = create_college_diversity_chart(diversity_metrics, top_n)
                 st.pyplot(fig)
+                
+                # Display the diversity data table
+                with st.expander("View Collaboration Diversity Data", expanded=False):
+                    # Format DataFrame for display
+                    display_df = diversity_metrics.copy()
+                    
+                    # Round values for display
+                    for col in ['collaboration_concentration', 'collaboration_diversity', 'effective_partners']:
+                        if col in display_df.columns:
+                            display_df[col] = display_df[col].round(3)
+                    
+                    # Rename columns for better readability
+                    display_df = display_df.rename(columns={
+                        'college': 'College',
+                        'total_collaborations': 'Total Collaborations',
+                        'unique_partners': 'Unique Partners',
+                        'collaboration_concentration': 'Concentration Index (HHI)',
+                        'collaboration_diversity': 'Diversity Index',
+                        'effective_partners': 'Effective Partners'
+                    })
+                    
+                    # Select columns to display
+                    columns_to_display = [
+                        'College', 'Total Collaborations', 'Unique Partners',
+                        'Diversity Index', 'Concentration Index (HHI)', 'Effective Partners'
+                    ]
+                    
+                    # Partners column might be too large to display well
+                    if 'partners' in display_df.columns:
+                        display_df['Partner Colleges'] = display_df['partners'].apply(lambda x: ', '.join(x))
+                        columns_to_display.append('Partner Colleges')
+                    
+                    st.dataframe(display_df[columns_to_display])
+            else:
+                st.info("No diversity metrics available. Please upload data with multiple colleges collaborating on projects.")
+        
+        # Explore College Pairs tab
+        with network_tabs[6]:
+            st.markdown("### Explore College Pairs")
+            
+            st.markdown("""
+            This interactive tool allows you to explore collaborations between specific pairs of colleges.
+            Select two colleges from the dropdown menus to see detailed information about their collaborative
+            projects.
+            """)
+            
+            if collaboration_matrix.empty or not college_pair_projects:
+                st.info("No collaboration data available. Please upload data with multiple colleges collaborating on projects.")
+            else:
+                # Get a list of all colleges in the collaboration matrix
+                all_colleges = sorted(collaboration_matrix.index.tolist())
+                
+                # Select colleges
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    college1 = st.selectbox(
+                        "Select First College", 
+                        options=all_colleges,
+                        key="explore_college1"
+                    )
+                
+                with col2:
+                    # Filter to only include colleges that have collaborated with the first college
+                    collaborating_colleges = [
+                        college for college in all_colleges 
+                        if college != college1 and collaboration_matrix.loc[college1, college] > 0
+                    ]
+                    
+                    if collaborating_colleges:
+                        college2 = st.selectbox(
+                            "Select Second College", 
+                            options=collaborating_colleges,
+                            key="explore_college2"
+                        )
+                        
+                        # Get collaboration count
+                        collab_count = int(collaboration_matrix.loc[college1, college2])
+                        
+                        # Display collaboration metrics
+                        st.metric(
+                            "Number of Collaborative Projects", 
+                            collab_count
+                        )
+                        
+                        # Get project details
+                        pair_key = tuple(sorted([college1, college2]))
+                        if pair_key in college_pair_projects:
+                            projects = college_pair_projects[pair_key]
+                            
+                            # Convert to DataFrame for display
+                            projects_df = pd.DataFrame(projects)
+                            
+                            # Create expandable project list
+                            st.markdown(f"### Collaborative Projects between {college1} and {college2}")
+                            
+                            for i, project in enumerate(projects):
+                                with st.expander(f"Project: {project['grant_code']} (FY {project['fiscal_year']})"):
+                                    # Project overview
+                                    st.markdown(f"**Grant Code:** {project['grant_code']}")
+                                    st.markdown(f"**Fiscal Year:** {project['fiscal_year']}")
+                                    
+                                    if project['award_amount'] is not None:
+                                        st.markdown(f"**Award Amount:** ${project['award_amount']:,.2f}")
+                                    
+                                    # PIs
+                                    st.markdown("**Principal Investigators:**")
+                                    for pi in project['pis']:
+                                        st.markdown(f"- {pi}")
+                                    
+                                    # Co-PIs
+                                    st.markdown("**Co-Principal Investigators:**")
+                                    if project['co_pis']:
+                                        for co_pi in project['co_pis']:
+                                            st.markdown(f"- {co_pi}")
+                                    else:
+                                        st.markdown("*No Co-PIs*")
+                                    
+                                    # College Units
+                                    st.markdown("**All College Units:**")
+                                    for unit in project['college_units']:
+                                        st.markdown(f"- {unit}")
+                    else:
+                        st.info(f"No colleges have collaborated with {college1}.")
     
     # Export Data tab
     with tab8:
