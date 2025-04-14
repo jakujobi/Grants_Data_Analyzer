@@ -1498,4 +1498,114 @@ def create_interactive_college_matrix_graph(collaboration_matrix: pd.DataFrame, 
     
     except ImportError:
         # Return None if Altair is not available
+        return None
+
+def create_interactive_network_graph(collaboration_matrix: pd.DataFrame, centrality_metrics: pd.DataFrame = None):
+    """
+    Create an interactive network graph visualization using Pyvis.
+    
+    This function creates an interactive network graph that resembles those in applications
+    like Obsidian. Users can zoom, pan, drag nodes, and hover over elements to see details.
+    
+    Args:
+        collaboration_matrix: DataFrame containing the pairwise college collaboration counts
+        centrality_metrics: Optional DataFrame with centrality metrics to size and color nodes
+        
+    Returns:
+        HTML file path of the generated interactive network or None if dependencies are missing
+    """
+    try:
+        import networkx as nx
+        from pyvis.network import Network
+        import tempfile
+        import os
+        
+        if collaboration_matrix.empty:
+            return None
+        
+        # Create a NetworkX graph
+        G = nx.Graph()
+        
+        # Add nodes (colleges)
+        for college in collaboration_matrix.index:
+            G.add_node(college)
+        
+        # Add edges (collaborations)
+        for i, college1 in enumerate(collaboration_matrix.index):
+            for j, college2 in enumerate(collaboration_matrix.columns):
+                if i != j:  # Skip self-collaborations
+                    weight = collaboration_matrix.loc[college1, college2]
+                    if weight > 0:
+                        G.add_edge(college1, college2, weight=int(weight), title=f"{weight} collaborations")
+        
+        # Define SDSU colors
+        SDSU_BLUE = "#0033A0"
+        SDSU_YELLOW = "#FFD100"
+        
+        # Create pyvis network
+        net = Network(height="800px", width="100%", notebook=False, bgcolor="#ffffff")
+        
+        # Configure physics for better interaction
+        net.barnes_hut(gravity=-5000, central_gravity=0.3, spring_length=200, spring_strength=0.05, damping=0.09)
+        
+        # Take the NetworkX graph and convert it
+        net.from_nx(G)
+        
+        # Set node sizes and colors based on centrality metrics if provided
+        if centrality_metrics is not None and not centrality_metrics.empty:
+            # Create a dictionary for quick lookup
+            centrality_dict = {}
+            for _, row in centrality_metrics.iterrows():
+                college = row['college']
+                centrality_dict[college] = {
+                    'degree': row.get('degree_centrality', 0),
+                    'betweenness': row.get('betweenness_centrality', 0),
+                    'eigenvector': row.get('eigenvector_centrality', 0),
+                    'total_collaborations': row.get('total_collaborations', 0)
+                }
+            
+            # Update nodes with centrality information
+            for node in net.nodes:
+                college = node['id']
+                if college in centrality_dict:
+                    metrics = centrality_dict[college]
+                    degree = metrics['degree']
+                    
+                    # Scale node size based on degree centrality
+                    size = 15 + (degree * 85)  # Min 15, scales up with centrality
+                    color = SDSU_BLUE
+                    
+                    # Set node properties
+                    node['size'] = size
+                    node['color'] = color
+                    node['title'] = (f"<b>{college}</b><br>"
+                                    f"Degree Centrality: {metrics['degree']:.3f}<br>"
+                                    f"Betweenness Centrality: {metrics['betweenness']:.3f}<br>"
+                                    f"Eigenvector Centrality: {metrics['eigenvector']:.3f}<br>"
+                                    f"Total Collaborations: {metrics['total_collaborations']}")
+        
+        # Update edge properties for better visualization
+        for edge in net.edges:
+            weight = edge.get('weight', 1)
+            # Scale edge width based on weight
+            width = 1 + (weight * 0.5)  # Min 1, scales up with weight
+            edge['width'] = width
+            edge['title'] = f"{weight} collaborations"
+            edge['color'] = {'color': '#999999', 'opacity': 0.8}
+        
+        # Configure other visualization options
+        net.toggle_physics(True)
+        net.show_buttons(filter_=['physics'])
+        
+        # Create a temporary file to save the HTML
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as temp:
+            temp_path = temp.name
+            
+        # Save the interactive network to the temp file
+        net.save_graph(temp_path)
+        
+        return temp_path
+    
+    except ImportError as e:
+        print(f"Warning: Could not create interactive network graph. Missing dependency: {e}")
         return None 

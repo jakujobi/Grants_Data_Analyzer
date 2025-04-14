@@ -54,7 +54,8 @@ from modules.visuals import (
     # New visualization functions for college collaboration network
     create_college_network_graph, create_college_heatmap,
     create_college_role_distribution_chart, create_college_diversity_chart,
-    create_college_collaboration_dashboard, create_interactive_college_matrix_graph
+    create_college_collaboration_dashboard, create_interactive_college_matrix_graph,
+    create_interactive_network_graph
 )
 from modules.utils import export_to_excel, export_to_csv, ensure_directory_exists
 from modules.components import detailed_data_view, project_details_view, create_expandable_project_list
@@ -1279,8 +1280,75 @@ if st.session_state.dataframes:
             
             # Create the network graph
             if not collaboration_matrix.empty:
-                fig = create_college_network_graph(collaboration_matrix, centrality_metrics)
-                st.pyplot(fig)
+                # Add option to switch between static and interactive views
+                view_type = st.radio(
+                    "Select visualization type:",
+                    ["Static Graph", "Interactive Graph (Obsidian-like)"],
+                    key="network_view_type"
+                )
+                
+                if view_type == "Static Graph":
+                    # Use the existing static visualization
+                    fig = create_college_network_graph(collaboration_matrix, centrality_metrics)
+                    st.pyplot(fig)
+                else:
+                    # Check for required dependencies first
+                    missing_dependencies = []
+                    try:
+                        import networkx as nx
+                    except ImportError:
+                        missing_dependencies.append("networkx")
+                    
+                    try:
+                        from pyvis.network import Network
+                    except ImportError:
+                        missing_dependencies.append("pyvis")
+                    
+                    if missing_dependencies:
+                        st.warning(f"Interactive graph requires additional libraries: {', '.join(missing_dependencies)}")
+                        st.info(
+                            "To install the required libraries, run the following command in your terminal:\n\n"
+                            f"```pip install {' '.join(missing_dependencies)}```"
+                        )
+                        
+                        # Fall back to static visualization
+                        st.markdown("#### Falling back to static visualization:")
+                        fig = create_college_network_graph(collaboration_matrix, centrality_metrics)
+                        st.pyplot(fig)
+                    else:
+                        # Create interactive network graph
+                        with st.spinner("Generating interactive network graph..."):
+                            html_path = create_interactive_network_graph(collaboration_matrix, centrality_metrics)
+                            
+                            if html_path:
+                                # Read the HTML file
+                                with open(html_path, 'r', encoding='utf-8') as f:
+                                    html_content = f.read()
+                                
+                                # Display the interactive graph
+                                st.components.v1.html(html_content, height=800)
+                                
+                                # Add helpful instructions
+                                st.info("""
+                                **Interactive Features:**
+                                - **Drag nodes** to rearrange the network
+                                - **Zoom in/out** using mouse wheel or pinch gesture
+                                - **Hover over nodes** to see detailed college metrics
+                                - **Hover over edges** to see collaboration counts
+                                - **Click and drag the background** to pan the view
+                                - Use the **physics button** to toggle force-directed layout
+                                """)
+                                
+                                # Clean up the temporary file
+                                try:
+                                    import os
+                                    os.unlink(html_path)
+                                except:
+                                    pass  # Ignore cleanup errors
+                            else:
+                                st.error("Failed to generate interactive network graph. Falling back to static visualization.")
+                                fig = create_college_network_graph(collaboration_matrix, centrality_metrics)
+                                st.pyplot(fig)
                 
                 # Add network statistics
                 if not centrality_metrics.empty:
