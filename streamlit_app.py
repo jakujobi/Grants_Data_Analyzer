@@ -393,8 +393,8 @@ with st.sidebar:
 # Main content
 if st.session_state.dataframes:
     # Analysis tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
-        "Summary", "Multi-College Projects", "Collaborators", 
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "Summary", "Collaborators", 
         "Project Counts", "College Analysis", "Projects with X Co-PIs", 
         "Multi-College Projects Analyzer", "Export Data"
     ])
@@ -422,37 +422,8 @@ if st.session_state.dataframes:
         fig = create_summary_dashboard(summary_counts)
         st.pyplot(fig)
     
-    # Multi-College Projects tab
-    with tab2:
-        st.markdown(f'<h2 class="sub-header">Multi-College Projects</h2>', unsafe_allow_html=True)
-        
-        # Count multi-college projects
-        multi_college_count = count_multi_college_projects(st.session_state.filtered_dataframes)
-        
-        # Display count
-        st.metric("Projects Involving Multiple Colleges", multi_college_count)
-        
-        # Count multi-Co-PI projects
-        multi_co_pi_count = count_multi_co_pi_projects(st.session_state.filtered_dataframes)
-        
-        # Display count
-        st.metric("Projects with Multiple Co-PIs", multi_co_pi_count)
-        
-        # Create visualization
-        data = pd.DataFrame({
-            'Category': ['Multi-College Projects', 'Multi-Co-PI Projects'],
-            'Count': [multi_college_count, multi_co_pi_count]
-        })
-        
-        fig = create_bar_chart(
-            data, 'Category', 'Count', 
-            'Project Collaboration Metrics',
-            y_label='Number of Projects'
-        )
-        st.pyplot(fig)
-    
     # Collaborators tab
-    with tab3:
+    with tab2:
         st.markdown(f'<h2 class="sub-header">Colleges with Most Collaborators</h2>', unsafe_allow_html=True)
         
         # Get colleges with most collaborators
@@ -474,7 +445,7 @@ if st.session_state.dataframes:
         st.pyplot(fig)
     
     # Project Counts tab
-    with tab4:
+    with tab3:
         st.markdown(f'<h2 class="sub-header">Project Counts by Person</h2>', unsafe_allow_html=True)
         
         # Get project counts by person
@@ -510,7 +481,7 @@ if st.session_state.dataframes:
         st.pyplot(fig)
     
     # College Analysis tab
-    with tab5:
+    with tab4:
         st.markdown(f'<h2 class="sub-header">Projects per College</h2>', unsafe_allow_html=True)
         
         # Get project counts by college
@@ -528,7 +499,7 @@ if st.session_state.dataframes:
         st.pyplot(fig)
     
     # Projects with X Co-PIs tab
-    with tab6:
+    with tab5:
         st.markdown(f'<h2 class="sub-header">Projects with X Co-PIs Analysis</h2>', unsafe_allow_html=True)
         
         # Create columns for filter controls
@@ -810,8 +781,8 @@ if st.session_state.dataframes:
             else:
                 st.info("Please select valid filter options to view project details.")
     
-    # New Multi-College Projects Analyzer tab
-    with tab7:
+    # Multi-College Projects Analyzer tab
+    with tab6:
         st.markdown(f'<h2 class="sub-header">Multi-College Projects Analyzer</h2>', unsafe_allow_html=True)
         
         # Description of what constitutes a multi-college project
@@ -1209,7 +1180,7 @@ if st.session_state.dataframes:
                 st.info("No funding data available")
     
     # Export Data tab
-    with tab8:
+    with tab7:
         st.markdown(f'<h2 class="sub-header">Export Data</h2>', unsafe_allow_html=True)
         
         # Create output directory
