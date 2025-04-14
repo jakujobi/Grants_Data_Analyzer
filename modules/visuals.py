@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Tuple, Optional, Union, Any
+import json
 
 # SDSU brand colors
 SDSU_BLUE = "#0033A0"
@@ -1500,7 +1501,18 @@ def create_interactive_college_matrix_graph(collaboration_matrix: pd.DataFrame, 
         # Return None if Altair is not available
         return None
 
-def create_interactive_network_graph(collaboration_matrix: pd.DataFrame, centrality_metrics: pd.DataFrame = None):
+def create_interactive_network_graph(
+    collaboration_matrix: pd.DataFrame, 
+    centrality_metrics: pd.DataFrame = None,
+    node_shape: str = "dot",
+    color_scheme: str = "blue",
+    text_inside_node: bool = False,
+    node_border_width: int = 2,
+    edge_style: str = "straight",
+    background_color: str = "#ffffff",
+    font_color: str = "#ffffff",
+    physics_enabled: bool = True
+):
     """
     Create an interactive network graph visualization using Pyvis.
     
@@ -1510,6 +1522,14 @@ def create_interactive_network_graph(collaboration_matrix: pd.DataFrame, central
     Args:
         collaboration_matrix: DataFrame containing the pairwise college collaboration counts
         centrality_metrics: Optional DataFrame with centrality metrics to size and color nodes
+        node_shape: Shape of nodes ("dot", "circle", "ellipse", "box", "text", "diamond", "star")
+        color_scheme: Color scheme to use ("blue", "yellow", "green", "red", "high_contrast")
+        text_inside_node: Whether to display text inside nodes or as labels
+        node_border_width: Width of node borders in pixels
+        edge_style: Edge style ("straight", "curved", "dashed")
+        background_color: Background color of the network
+        font_color: Font color for node labels
+        physics_enabled: Whether to enable physics simulation by default
         
     Returns:
         HTML file path of the generated interactive network or None if dependencies are missing
@@ -1519,9 +1539,26 @@ def create_interactive_network_graph(collaboration_matrix: pd.DataFrame, central
         from pyvis.network import Network
         import tempfile
         import os
+        import json
         
         if collaboration_matrix.empty:
             return None
+        
+        # Define color schemes (primary, secondary)
+        color_schemes = {
+            "blue": ("#0033A0", "#0055F0"),  # SDSU Blue
+            "yellow": ("#FFD100", "#FFF200"),  # SDSU Yellow
+            "green": ("#008644", "#00C050"),  # Green
+            "red": ("#C8102E", "#FF3050"),  # Red
+            "high_contrast": ("#000000", "#444444")  # Black/Gray
+        }
+        
+        # Set colors based on selected scheme
+        if color_scheme in color_schemes:
+            primary_color, secondary_color = color_schemes[color_scheme]
+        else:
+            # Default to blue
+            primary_color, secondary_color = color_schemes["blue"]
         
         # Create a NetworkX graph
         G = nx.Graph()
@@ -1536,66 +1573,119 @@ def create_interactive_network_graph(collaboration_matrix: pd.DataFrame, central
                 if i != j:  # Skip self-collaborations
                     weight = collaboration_matrix.loc[college1, college2]
                     if weight > 0:
-                        G.add_edge(college1, college2, weight=int(weight), title=f"{weight} collaborations")
+                        G.add_edge(college1, college2, weight=int(weight))
         
-        # Define SDSU colors
-        SDSU_BLUE = "#0033A0"
-        SDSU_YELLOW = "#FFD100"
+        # Create pyvis network with initial physics config
+        net = Network(height="800px", width="100%", notebook=False, bgcolor=background_color)
         
-        # Create pyvis network
-        net = Network(height="800px", width="100%", notebook=False, bgcolor="#ffffff")
-        
-        # Configure physics for better interaction
-        net.barnes_hut(gravity=-5000, central_gravity=0.3, spring_length=200, spring_strength=0.05, damping=0.09)
-        
-        # Take the NetworkX graph and convert it
+        # Add the network from NetworkX
         net.from_nx(G)
         
-        # Set node sizes and colors based on centrality metrics if provided
-        if centrality_metrics is not None and not centrality_metrics.empty:
-            # Create a dictionary for quick lookup
-            centrality_dict = {}
-            for _, row in centrality_metrics.iterrows():
-                college = row['college']
-                centrality_dict[college] = {
-                    'degree': row.get('degree_centrality', 0),
-                    'betweenness': row.get('betweenness_centrality', 0),
-                    'eigenvector': row.get('eigenvector_centrality', 0),
-                    'total_collaborations': row.get('total_collaborations', 0)
-                }
+        # Configure node appearances
+        for node in net.nodes:
+            college = node['id']
             
-            # Update nodes with centrality information
-            for node in net.nodes:
-                college = node['id']
-                if college in centrality_dict:
-                    metrics = centrality_dict[college]
-                    degree = metrics['degree']
+            # Set basic properties for all nodes
+            node['shape'] = node_shape
+            node['borderWidth'] = node_border_width
+            
+            # Set colors
+            node['color'] = {
+                'background': primary_color,
+                'border': secondary_color,
+                'highlight': {
+                    'background': secondary_color,
+                    'border': primary_color
+                }
+            }
+            
+            # Set node size based on centrality if available
+            if centrality_metrics is not None and not centrality_metrics.empty:
+                # Find this college in centrality metrics
+                college_metrics = centrality_metrics[centrality_metrics['college'] == college]
+                if not college_metrics.empty:
+                    degree = college_metrics.iloc[0].get('degree_centrality', 0.1)
+                    # Scale node size based on degree centrality (min 15, scales up with centrality)
+                    node['size'] = 15 + (degree * 85)
                     
-                    # Scale node size based on degree centrality
-                    size = 15 + (degree * 85)  # Min 15, scales up with centrality
-                    color = SDSU_BLUE
+                    # Create tooltip with metrics
+                    metrics_text = (
+                        f"<div style='font-family: Arial; padding: 10px;'>"
+                        f"<h3 style='margin-top: 0;'>{college}</h3>"
+                        f"<hr style='margin: 5px 0;'>"
+                    )
                     
-                    # Set node properties
-                    node['size'] = size
-                    node['color'] = color
-                    node['title'] = (f"<b>{college}</b><br>"
-                                    f"Degree Centrality: {metrics['degree']:.3f}<br>"
-                                    f"Betweenness Centrality: {metrics['betweenness']:.3f}<br>"
-                                    f"Eigenvector Centrality: {metrics['eigenvector']:.3f}<br>"
-                                    f"Total Collaborations: {metrics['total_collaborations']}")
+                    # Add metrics if available
+                    for metric_name in ['degree_centrality', 'betweenness_centrality', 'eigenvector_centrality', 'total_collaborations']:
+                        if metric_name in college_metrics:
+                            formatted_name = metric_name.replace('_', ' ').title()
+                            value = college_metrics.iloc[0][metric_name]
+                            
+                            if isinstance(value, (int, float)):
+                                if isinstance(value, int):
+                                    formatted_value = f"{value}"
+                                else:
+                                    formatted_value = f"{value:.3f}"
+                                
+                                metrics_text += f"<p><b>{formatted_name}:</b> {formatted_value}</p>"
+                    
+                    metrics_text += "</div>"
+                    node['title'] = metrics_text
+            else:
+                # Default size if no metrics
+                node['size'] = 25
+                node['title'] = college
+            
+            # Configure label display
+            if text_inside_node:
+                # For text inside nodes, use abbreviation
+                abbr = ''.join([c for c in college if c.isupper() or c.isdigit()])
+                if not abbr or len(abbr) <= 1:
+                    # If no clear abbreviation, take first few chars
+                    abbr = college[:min(4, len(college))]
+                
+                node['label'] = abbr
+                # Set font color for inside node
+                node['font'] = {'color': font_color}
+            else:
+                # For text outside nodes, use full name
+                node['label'] = college
+                # Set font color for outside node (with outline for better visibility)
+                node['font'] = {
+                    'color': font_color if color_scheme == "high_contrast" else "#000000",
+                    'strokeWidth': 2,
+                    'strokeColor': "#ffffff"
+                }
         
-        # Update edge properties for better visualization
+        # Configure edge appearances
         for edge in net.edges:
+            # Get the weight
             weight = edge.get('weight', 1)
-            # Scale edge width based on weight
-            width = 1 + (weight * 0.5)  # Min 1, scales up with weight
-            edge['width'] = width
+            
+            # Set edge width proportional to weight
+            edge['width'] = 1 + (weight * 0.5)
+            
+            # Set edge tooltip
             edge['title'] = f"{weight} collaborations"
-            edge['color'] = {'color': '#999999', 'opacity': 0.8}
+            
+            # Apply style
+            if edge_style == "dashed":
+                edge['dashes'] = True
+            elif edge_style == "curved":
+                edge['smooth'] = {'type': 'curvedCW', 'roundness': 0.2}
+            
+            # Set color with transparency
+            edge['color'] = {
+                'color': secondary_color,
+                'opacity': 0.7
+            }
         
-        # Configure other visualization options
-        net.toggle_physics(True)
-        net.show_buttons(filter_=['physics'])
+        # Enable/disable physics
+        if not physics_enabled:
+            net.toggle_physics(False)
+        
+        # Enable physics button
+        net.show_buttons(['physics'])
         
         # Create a temporary file to save the HTML
         with tempfile.NamedTemporaryFile(delete=False, suffix='.html') as temp:
@@ -1606,6 +1696,6 @@ def create_interactive_network_graph(collaboration_matrix: pd.DataFrame, central
         
         return temp_path
     
-    except ImportError as e:
-        print(f"Warning: Could not create interactive network graph. Missing dependency: {e}")
-        return None 
+    except Exception as e:
+        print(f"Error creating interactive network graph: {e}")
+        return None

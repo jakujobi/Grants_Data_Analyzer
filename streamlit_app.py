@@ -1045,6 +1045,8 @@ if st.session_state.dataframes:
                     
                     # Display the table
                     st.dataframe(display_df[columns_to_display])
+            else:
+                st.info("No college metrics available. Please upload data with multiple colleges collaborating on projects.")
         
         # Detailed Projects tab
         with analysis_tabs[3]:
@@ -1316,9 +1318,116 @@ if st.session_state.dataframes:
                         fig = create_college_network_graph(collaboration_matrix, centrality_metrics)
                         st.pyplot(fig)
                     else:
-                        # Create interactive network graph
+                        # Add configuration options for the interactive graph
+                        with st.expander("Configure Interactive Graph", expanded=False):
+                            st.markdown("### Graph Configuration")
+                            
+                            # Create columns for layout
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                # Node appearance options
+                                st.markdown("#### Node Appearance")
+                                node_shape = st.selectbox(
+                                    "Node Shape",
+                                    options=["dot", "circle", "ellipse", "box", "text", "diamond", "star"],
+                                    index=0,
+                                    key="node_shape"
+                                )
+                                
+                                color_scheme = st.selectbox(
+                                    "Color Scheme",
+                                    options=["blue", "yellow", "green", "red", "high_contrast"],
+                                    index=0,
+                                    key="color_scheme"
+                                )
+                                
+                                text_inside_node = st.checkbox(
+                                    "Display Text Inside Nodes",
+                                    value=False,
+                                    key="text_inside_node",
+                                    help="If checked, abbreviated text will be shown inside nodes. Otherwise, full labels will be shown outside."
+                                )
+                                
+                                node_border_width = st.slider(
+                                    "Node Border Width",
+                                    min_value=0,
+                                    max_value=5,
+                                    value=2,
+                                    key="node_border_width"
+                                )
+                            
+                            with col2:
+                                # Edge and general options
+                                st.markdown("#### Edge & General Appearance")
+                                edge_style = st.selectbox(
+                                    "Edge Style",
+                                    options=["straight", "curved", "dashed"],
+                                    index=0,
+                                    key="edge_style"
+                                )
+                                
+                                background_color = st.color_picker(
+                                    "Background Color",
+                                    value="#ffffff",
+                                    key="background_color"
+                                )
+                                
+                                font_color = st.color_picker(
+                                    "Font Color (for text inside nodes)",
+                                    value="#ffffff",
+                                    key="font_color"
+                                )
+                                
+                                physics_enabled = st.checkbox(
+                                    "Enable Physics Simulation",
+                                    value=True,
+                                    key="physics_enabled",
+                                    help="If checked, nodes will respond to forces and can be manipulated. Disable for a static layout."
+                                )
+                            
+                            # Add a reset button to restore defaults
+                            if st.button("Reset to Defaults", key="reset_graph_config"):
+                                st.session_state.node_shape = "dot"
+                                st.session_state.color_scheme = "blue"  
+                                st.session_state.text_inside_node = False
+                                st.session_state.node_border_width = 2
+                                st.session_state.edge_style = "straight"
+                                st.session_state.background_color = "#ffffff"
+                                st.session_state.font_color = "#ffffff"
+                                st.session_state.physics_enabled = True
+                                st.experimental_rerun()
+                            
+                            # Add troubleshooting tips
+                            st.markdown("---")
+                            st.markdown("### Troubleshooting Tips")
+                            st.markdown("""
+                            **If you encounter issues with the interactive graph:**
+                            
+                            1. Try using a "box" or "circle" node shape for better text visibility
+                            2. The "high_contrast" color scheme works well with white text
+                            3. Try disabling physics if the graph is slow to render
+                            4. Smaller datasets work better with interactive visualization
+                            5. Make sure you have the latest version of Pyvis installed
+                               ```
+                               pip install --upgrade pyvis
+                               ```
+                            """)
+                        
+                        # Create interactive network graph with customized options
                         with st.spinner("Generating interactive network graph..."):
-                            html_path = create_interactive_network_graph(collaboration_matrix, centrality_metrics)
+                            html_path = create_interactive_network_graph(
+                                collaboration_matrix, 
+                                centrality_metrics,
+                                node_shape=st.session_state.node_shape,
+                                color_scheme=st.session_state.color_scheme,
+                                text_inside_node=st.session_state.text_inside_node,
+                                node_border_width=st.session_state.node_border_width,
+                                edge_style=st.session_state.edge_style,
+                                background_color=st.session_state.background_color,
+                                font_color=st.session_state.font_color,
+                                physics_enabled=st.session_state.physics_enabled
+                            )
                             
                             if html_path:
                                 # Read the HTML file
@@ -1326,18 +1435,39 @@ if st.session_state.dataframes:
                                     html_content = f.read()
                                 
                                 # Display the interactive graph
-                                st.components.v1.html(html_content, height=800)
-                                
-                                # Add helpful instructions
-                                st.info("""
-                                **Interactive Features:**
-                                - **Drag nodes** to rearrange the network
-                                - **Zoom in/out** using mouse wheel or pinch gesture
-                                - **Hover over nodes** to see detailed college metrics
-                                - **Hover over edges** to see collaboration counts
-                                - **Click and drag the background** to pan the view
-                                - Use the **physics button** to toggle force-directed layout
-                                """)
+                                try:
+                                    st.components.v1.html(html_content, height=800)
+                                    
+                                    # Add helpful instructions
+                                    st.info("""
+                                    **Interactive Features:**
+                                    - **Drag nodes** to rearrange the network
+                                    - **Zoom in/out** using mouse wheel or pinch gesture
+                                    - **Hover over nodes** to see detailed college metrics
+                                    - **Hover over edges** to see collaboration counts
+                                    - **Click and drag the background** to pan the view
+                                    - Use the **physics button** to toggle force-directed layout
+                                    
+                                    **Tip:** Try the "high_contrast" color scheme with "box" or "circle" node shapes for maximum readability.
+                                    """)
+                                    
+                                    # Add export option
+                                    if st.button("Export Graph as HTML", key="export_network_graph"):
+                                        output_dir = "output"
+                                        ensure_directory_exists(output_dir)
+                                        output_path = os.path.join(output_dir, "college_network_graph.html")
+                                        
+                                        # Copy the file
+                                        import shutil
+                                        shutil.copy2(html_path, output_path)
+                                        
+                                        st.success(f"Graph exported to {output_path}")
+                                        st.markdown(f"You can open this HTML file in any web browser for interactive exploration.")
+                                except Exception as e:
+                                    st.error(f"Error rendering interactive graph: {str(e)}")
+                                    st.warning("Falling back to static visualization. Consider changing graph configuration options or using the static graph.")
+                                    fig = create_college_network_graph(collaboration_matrix, centrality_metrics)
+                                    st.pyplot(fig)
                                 
                                 # Clean up the temporary file
                                 try:
