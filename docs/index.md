@@ -27,6 +27,7 @@ The Grant Data Explorer includes several powerful features for analyzing grant d
 - [Project Counts Analysis](features/project_counts.md) (coming soon)
 - [College Analysis](features/college_analysis.md) (coming soon)
 - [Projects with X Co-PIs Analysis](co_pi_analysis.md)
+- [Multi-College Projects Analyzer](multi_college_analyzer.md)
 - [Data Export Options](features/export.md) (coming soon)
 
 ## Components
