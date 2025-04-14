@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, List, Tuple, Optional, Union, Any
 import json
+import matplotlib.gridspec as gridspec
 
 # SDSU brand colors
 SDSU_BLUE = "#0033A0"
@@ -1049,7 +1050,7 @@ def create_college_role_distribution_chart(role_distribution: pd.DataFrame, top_
     top_colleges = role_distribution.sort_values('total_projects', ascending=False).head(top_n)
     
     # Create figure with subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 10))
     
     # Define SDSU colors
     SDSU_BLUE = "#0033A0"
@@ -1080,34 +1081,46 @@ def create_college_role_distribution_chart(role_distribution: pd.DataFrame, top_
     ax1.grid(axis='y', linestyle='--', alpha=0.3)
     ax1.legend()
     
-    # Pie charts showing role percentage distribution
+    # Clear the right subplot for a better pie chart layout
+    ax2.clear()
+    ax2.set_axis_off()
+    
+    # Determine number of pies to display
+    num_pies = min(len(top_colleges), top_n)
+    
+    # Calculate an efficient grid layout
+    # Use 3 columns instead of 4 for better spacing
+    cols = 3
+    rows = (num_pies + cols - 1) // cols  # Ceiling division
+    
+    # Create a more efficient grid for the pie charts
+    gs = gridspec.GridSpec(rows, cols, figure=fig, wspace=0.4, hspace=0.6, 
+                          left=0.55, right=0.95, top=0.85, bottom=0.1)
+    
+    # Create a pie chart for each college in the top N
     for i, (_, college) in enumerate(top_colleges.iterrows()):
+        if i >= num_pies:
+            break
+            
         # Skip colleges with no projects
         if college['total_projects'] == 0:
             continue
         
-        # Calculate position in the grid (4 columns)
-        row = i // 4
-        col = i % 4
+        # Calculate position in the grid
+        row = i // cols
+        col = i % cols
         
-        # Create a small pie chart for this college
-        size = 0.15  # Size of each pie chart
-        margin = 0.05  # Margin between pie charts
-        
-        # Position the pie chart in the grid
-        x_pos = col * (size + margin) + size/2
-        y_pos = 1 - (row * (size + margin) + size/2)
+        # Create subplot for this college's pie chart
+        ax_pie = fig.add_subplot(gs[row, col])
         
         # Draw the pie chart
-        wedges, texts, autotexts = ax2.pie(
+        wedges, texts, autotexts = ax_pie.pie(
             [college['pi_percentage'], college['co_pi_percentage']],
             colors=[SDSU_BLUE, SDSU_YELLOW],
-            autopct='%1.0f%%',
+            autopct='%1.1f%%',
             startangle=90,
             wedgeprops={'linewidth': 1, 'edgecolor': 'white'},
-            textprops={'fontsize': 8},
-            radius=size,
-            center=(x_pos, y_pos)
+            textprops={'fontsize': 10, 'fontweight': 'bold'}
         )
         
         # Make the percentage text white for better visibility
@@ -1115,23 +1128,20 @@ def create_college_role_distribution_chart(role_distribution: pd.DataFrame, top_
             autotext.set_color('white')
         
         # Add college name as a title for each pie
-        ax2.text(x_pos, y_pos + size + 0.01, college['college'],
-                ha='center', va='bottom', fontsize=8)
-    
-    # Set title for the pie chart subplot
-    ax2.set_title('PI vs. Co-PI Role Distribution by College', fontsize=14, fontweight='bold')
-    ax2.set_aspect('equal')
-    ax2.set_xlim(0, 1)
-    ax2.set_ylim(0, 1)
-    ax2.axis('off')
-    
-    # Add legend for the pie charts
-    ax2.legend(['PI Projects', 'Co-PI Projects'], loc='upper right')
+        ax_pie.set_title(college['college'], fontsize=11, pad=10)
+        
+        # Only add legend to the first pie chart
+        if i == 0:
+            ax_pie.legend(['PI Projects', 'Co-PI Projects'], 
+                         loc='upper center', bbox_to_anchor=(0.5, -0.15),
+                         frameon=False, ncol=2, fontsize=10)
     
     # Set overall title
-    fig.suptitle('College Role Distribution Analysis', fontsize=16, fontweight='bold')
+    fig.suptitle('College Role Distribution Analysis', fontsize=16, fontweight='bold', y=0.98)
     
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    # Adjust the layout to give more space to the bar chart
+    plt.subplots_adjust(left=0.05, right=0.95, wspace=0.3)
+    
     return fig
 
 def create_college_diversity_chart(diversity_metrics: pd.DataFrame, top_n: int = 10) -> plt.Figure:
